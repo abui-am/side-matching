@@ -3,3 +3,5 @@ timm
 scikit-image
 peft
 wildlife-tools @ git+https://github.com/WildlifeDatasets/wildlife-tools@main
+# Colab ships torchao 0.10; recent peft raises unless torchao is absent or >=0.16.
+# finetune_lora.ipynb uninstalls torchao after install. Do not reinstall an old torchao.
