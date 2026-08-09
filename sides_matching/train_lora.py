@@ -243,12 +243,21 @@ def is_cuda_oom(exc: BaseException) -> bool:
 
 def enable_backbone_grad_checkpointing(backbone: nn.Module) -> bool:
     """Enable activation checkpointing on the timm / Peft-wrapped backbone if available."""
-    candidates = [backbone]
-    for attr in ("get_base_model", "model", "base_model"):
-        if hasattr(backbone, attr):
-            value = getattr(backbone, attr)
-            candidates.append(value() if callable(value) else value)
+    candidates: List[nn.Module] = [backbone]
+    get_base = getattr(backbone, "get_base_model", None)
+    if callable(get_base) and not isinstance(get_base, nn.Module):
+        candidates.append(get_base())
+    for attr in ("base_model", "model"):
+        value = getattr(backbone, attr, None)
+        # nn.Module is callable; never invoke it to "unwrap" or Swin.forward misses `x`.
+        if isinstance(value, nn.Module):
+            candidates.append(value)
+    seen = set()
     for candidate in candidates:
+        candidate_id = id(candidate)
+        if candidate_id in seen:
+            continue
+        seen.add(candidate_id)
         if hasattr(candidate, "set_grad_checkpointing"):
             candidate.set_grad_checkpointing(True)
             return True
