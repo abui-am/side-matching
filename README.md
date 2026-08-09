@@ -14,8 +14,8 @@ The main conclusion of the paper is that, when trying to match a photo of sea tu
 
 To install the repository, download it first. This can be either done manually or when git is installed by
 ```script
-git clone https://github.com/sadda/sides-matching.git
-cd sides-matching
+git clone https://github.com/abui-am/side-matching.git
+cd side-matching
 ```
 
 Optionally create a virtual environement. To install the required packages, open the console and run
