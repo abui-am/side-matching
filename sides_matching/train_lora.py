@@ -26,20 +26,21 @@ DEFAULT_LORA_TARGETS = ("qkv", "proj", "fc1", "fc2")
 class TrainConfig:
     model_name: str = MODEL_NAME
     img_size: int = 384
-    # MegaDescriptor-L @ 384 needs small batches on Colab T4 (15GB).
-    batch_size: int = 2
-    epochs: int = 20
-    lora_r: int = 8
-    lora_alpha: int = 16
+    # pair_batch_size = number of (anchor, opposite) pairs per step (= 2 images each).
+    batch_size: int = 1
+    epochs: int = 40
+    lora_r: int = 16
+    lora_alpha: int = 32
     lora_dropout: float = 0.05
     lora_target_modules: Tuple[str, ...] = DEFAULT_LORA_TARGETS
-    lr_lora: float = 1e-4
+    lr_lora: float = 2e-4
     lr_head: float = 1e-3
     weight_decay: float = 0.01
     arcface_s: float = 30.0
-    arcface_m: float = 0.3
+    arcface_m: float = 0.5
+    opposite_loss_weight: float = 1.0
     val_identity_fraction: float = 0.2
-    early_stop_patience: int = 5
+    early_stop_patience: int = 10
     seed: int = 42
     use_amp: bool = True
     grad_checkpointing: bool = True
@@ -110,6 +111,34 @@ class IdentityMapper:
 
     def to_dict(self) -> Dict[str, int]:
         return dict(self.identity_to_label)
+
+
+def ensure_orientation_column(df: pd.DataFrame) -> pd.DataFrame:
+    """Guarantee an orientation column (left/right) exists for opposite-side training."""
+    if "orientation" in df.columns and df["orientation"].notna().any():
+        return df
+    out = df.copy()
+    source = None
+    for column in ("path", "image", "image_name", "file", "filename"):
+        if column in out.columns:
+            source = out[column].astype(str)
+            break
+    if source is None:
+        raise KeyError(
+            "Could not find orientation or a path/image column to infer left/right from."
+        )
+    text = source.str.lower()
+    orientation = np.where(
+        text.str.contains("left") | text.str.contains(r"(?:^|[_/-])l(?:[_/-]|$)"),
+        "left",
+        np.where(
+            text.str.contains("right") | text.str.contains(r"(?:^|[_/-])r(?:[_/-]|$)"),
+            "right",
+            "unknown",
+        ),
+    )
+    out["orientation"] = orientation
+    return out
 
 
 def prefixed_identity(dataset_name: str, identity: str) -> str:
@@ -211,6 +240,69 @@ class LabelledWildlifeDataset(Dataset):
         return image, torch.tensor(label, dtype=torch.long)
 
 
+def normalize_orientation_codes(orientations: Sequence) -> np.ndarray:
+    """Map left/right style labels to {0, 1}; unknown -> -1."""
+    codes = np.full(len(orientations), -1, dtype=np.int64)
+    for idx, value in enumerate(orientations):
+        text = str(value).strip().lower()
+        if text in {"left", "l", "0"}:
+            codes[idx] = 0
+        elif text in {"right", "r", "1"}:
+            codes[idx] = 1
+    return codes
+
+
+class OppositePairDataset(Dataset):
+    """Sample (image_a, image_b, label) preferring opposite sides of the same ID."""
+
+    def __init__(
+        self,
+        datasets: Sequence[WildlifeDataset],
+        label_parts: Sequence[np.ndarray],
+        orientation_parts: Sequence[np.ndarray],
+        seed: int = 42,
+    ) -> None:
+        self.base = ConcatLabelledDataset(datasets, label_parts)
+        self.orientations = np.concatenate([
+            normalize_orientation_codes(part) for part in orientation_parts
+        ])
+        if len(self.orientations) != len(self.base):
+            raise ValueError("orientation_parts length must match label_parts / datasets")
+        self.rng = np.random.default_rng(seed)
+        self.by_label: Dict[int, List[int]] = {}
+        self.by_label_ori: Dict[Tuple[int, int], List[int]] = {}
+        for index, label in enumerate(self.base.labels.tolist()):
+            label_i = int(label)
+            self.by_label.setdefault(label_i, []).append(index)
+            ori = int(self.orientations[index])
+            self.by_label_ori.setdefault((label_i, ori), []).append(index)
+        self.indices = np.arange(len(self.base))
+
+    def __len__(self) -> int:
+        return len(self.base)
+
+    def _sample_partner(self, index: int, label: int, ori: int) -> int:
+        opposite = 1 - ori if ori in (0, 1) else -1
+        if opposite in (0, 1):
+            candidates = [
+                j for j in self.by_label_ori.get((label, opposite), []) if j != index
+            ]
+            if candidates:
+                return int(self.rng.choice(candidates))
+        same_id = [j for j in self.by_label.get(label, []) if j != index]
+        if same_id:
+            return int(self.rng.choice(same_id))
+        return index
+
+    def __getitem__(self, index: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        image_a, label_tensor = self.base[index]
+        label = int(label_tensor.item())
+        ori = int(self.orientations[index])
+        partner = self._sample_partner(index, label, ori)
+        image_b, _ = self.base[partner]
+        return image_a, image_b, torch.tensor(label, dtype=torch.long)
+
+
 def build_concat_dataloader(
     datasets: Sequence[WildlifeDataset],
     label_parts: Sequence[np.ndarray],
@@ -225,6 +317,27 @@ def build_concat_dataloader(
         shuffle=shuffle,
         num_workers=num_workers,
         pin_memory=torch.cuda.is_available(),
+    )
+
+
+def build_opposite_pair_dataloader(
+    datasets: Sequence[WildlifeDataset],
+    label_parts: Sequence[np.ndarray],
+    orientation_parts: Sequence[np.ndarray],
+    batch_size: int,
+    num_workers: int = 2,
+    seed: int = 42,
+) -> DataLoader:
+    dataset = OppositePairDataset(
+        datasets, label_parts, orientation_parts, seed=seed,
+    )
+    return DataLoader(
+        dataset,
+        batch_size=max(1, int(batch_size)),
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=torch.cuda.is_available(),
+        drop_last=False,
     )
 
 
@@ -371,18 +484,53 @@ def train_epoch(
     device: torch.device,
     scaler: Optional[torch.cuda.amp.GradScaler] = None,
     use_amp: bool = True,
+    opposite_loss_weight: float = 0.0,
 ) -> float:
+    """Train one epoch.
+
+    Supports either:
+    - standard batches: (images, labels)
+    - opposite-pair batches: (images_a, images_b, labels)
+    """
     model.train()
     total_loss = 0.0
     n_batches = 0
     amp_enabled = bool(use_amp and device.type == "cuda")
-    for images, labels in loader:
-        images = images.to(device, non_blocking=True)
-        labels = labels.to(device, non_blocking=True)
+    for batch in loader:
         optimizer.zero_grad(set_to_none=True)
         with torch.autocast(device_type=device.type, enabled=amp_enabled):
-            logits = model(images, labels)
-            loss = F.cross_entropy(logits, labels)
+            if len(batch) == 3:
+                images_a, images_b, labels = batch
+                images_a = images_a.to(device, non_blocking=True)
+                images_b = images_b.to(device, non_blocking=True)
+                labels = labels.to(device, non_blocking=True)
+                emb_a_raw = model.encode(images_a)
+                emb_b_raw = model.encode(images_b)
+                emb_a = F.normalize(emb_a_raw, dim=1)
+                emb_b = F.normalize(emb_b_raw, dim=1)
+                logits_a = model.arcface_head(emb_a_raw, labels)
+                logits_b = model.arcface_head(emb_b_raw, labels)
+                loss_arc = 0.5 * (
+                    F.cross_entropy(logits_a, labels) + F.cross_entropy(logits_b, labels)
+                )
+                loss_opp = (1.0 - (emb_a * emb_b).sum(dim=-1)).mean()
+                # Also push apart different identities present in the pair-batch.
+                all_emb = torch.cat([emb_a, emb_b], dim=0)
+                all_labels = torch.cat([labels, labels], dim=0)
+                sim = all_emb @ all_emb.T
+                same = all_labels.unsqueeze(0) == all_labels.unsqueeze(1)
+                neg_mask = ~same
+                if neg_mask.any():
+                    loss_neg = torch.relu(sim[neg_mask]).mean()
+                else:
+                    loss_neg = emb_a.new_zeros(())
+                loss = loss_arc + opposite_loss_weight * (loss_opp + 0.5 * loss_neg)
+            else:
+                images, labels = batch
+                images = images.to(device, non_blocking=True)
+                labels = labels.to(device, non_blocking=True)
+                logits = model(images, labels)
+                loss = F.cross_entropy(logits, labels)
         if scaler is not None and amp_enabled:
             scaler.scale(loss).backward()
             scaler.step(optimizer)
@@ -448,6 +596,50 @@ def embedding_recall_at_1(
     similarity.fill_diagonal_(-math.inf)
     preds = similarity.argmax(dim=1)
     return (labels[preds] == labels).float().mean().item()
+
+
+@torch.no_grad()
+def opposite_embedding_recall_at_1(
+    model: MegaDescriptorLoRA,
+    loader: DataLoader,
+    orientations: np.ndarray,
+    device: torch.device,
+    use_amp: bool = True,
+) -> float:
+    """Top-1 identity recall when gallery is restricted to the opposite side."""
+    model.eval()
+    embeddings = []
+    labels = []
+    amp_enabled = bool(use_amp and device.type == "cuda")
+    for images, batch_labels in loader:
+        images = images.to(device, non_blocking=True)
+        with torch.autocast(device_type=device.type, enabled=amp_enabled):
+            batch_embeddings = F.normalize(model.encode(images), dim=1)
+        embeddings.append(batch_embeddings.float().cpu())
+        labels.append(batch_labels)
+    if not embeddings:
+        return 0.0
+    embeddings = torch.cat(embeddings, dim=0)
+    labels = torch.cat(labels, dim=0)
+    ori = normalize_orientation_codes(orientations)
+    if len(ori) != len(labels):
+        raise ValueError("orientations must align with validation loader order")
+    similarity = embeddings @ embeddings.T
+    similarity.fill_diagonal_(-math.inf)
+    correct = 0
+    total = 0
+    for i in range(len(labels)):
+        if ori[i] not in (0, 1):
+            continue
+        mask = ori == (1 - ori[i])
+        if not bool(mask.any()):
+            continue
+        scores = similarity[i].clone()
+        scores[~torch.as_tensor(mask)] = -math.inf
+        pred = int(scores.argmax().item())
+        correct += int(labels[pred] == labels[i])
+        total += 1
+    return correct / max(total, 1)
 
 
 def save_checkpoint(
