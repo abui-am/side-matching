@@ -1,5 +1,6 @@
 ipykernel
+peft
 scikit-image
 timm
-wildlife-datasets @ git+https://github.com/WildlifeDatasets/wildlife-datasets@develop
-wildlife-tools @ git+https://github.com/WildlifeDatasets/wildlife-tools
+wildlife-datasets
+wildlife-tools @ git+https://github.com/WildlifeDatasets/wildlife-tools@main

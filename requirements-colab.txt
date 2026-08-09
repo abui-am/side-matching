@@ -1,0 +1,5 @@
+wildlife-datasets
+timm
+scikit-image
+peft
+wildlife-tools @ git+https://github.com/WildlifeDatasets/wildlife-tools@main

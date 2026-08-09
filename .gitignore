@@ -4,6 +4,24 @@ features*/
 figures/
 images/
 
+# Images
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+*.tif
+*.tiff
+*.webp
+*.JPG
+*.JPEG
+*.PNG
+*.GIF
+*.BMP
+*.TIF
+*.TIFF
+*.WEBP
+
 # Tex
 *.synctex.gz
 
