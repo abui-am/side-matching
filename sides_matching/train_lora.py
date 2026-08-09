@@ -498,4 +498,5 @@ def wildlife_dataset_from_df(
     dataset_class: Callable,
     transform: Optional[T.Compose] = None,
 ) -> WildlifeDataset:
-    return dataset_class(root, df=df, transform=transform, img_load="auto")
+    # dataset wrappers (amvrakikos, etc.) already set img_load='auto'
+    return dataset_class(root, df=df, transform=transform)

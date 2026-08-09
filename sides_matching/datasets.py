@@ -10,10 +10,13 @@ def amvrakikos(root, transform=None, **kwargs):
 def reunion(root, transform=None, species=None, **kwargs):
     dataset = datasets.ReunionTurtles(root, img_load='auto', transform=transform, **kwargs)
     if species is not None:
-        df = dataset.df[dataset.df['species'] == species]
-        dataset = datasets.ReunionTurtles(root, df, img_load='auto', transform=transform, **kwargs)
+        filtered = dataset.df[dataset.df['species'] == species]
+        kwargs = {key: value for key, value in kwargs.items() if key != 'df'}
+        dataset = datasets.ReunionTurtles(
+            root, df=filtered, img_load='auto', transform=transform, **kwargs
+        )
     dataset.df = modify_dates(dataset.df)
-    return dataset    
+    return dataset
     
 def reunion_green(root, **kwargs):
     return reunion(root, species='Green', **kwargs)
