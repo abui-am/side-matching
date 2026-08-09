@@ -21,6 +21,7 @@ from .train_lora import (
     extract_features,
     save_feature_pickle,
     evaluate_zakynthos_predictions,
+    compare_base_vs_lora,
     clear_cuda_memory,
     is_cuda_oom,
 )

@@ -535,6 +535,10 @@ def evaluate_zakynthos_predictions(
         features_dir,
         f"{method_prefix}_Zakynthos_flip={False}_grayscale={grayscale}.pickle",
     )
+    if not os.path.exists(path_query):
+        raise FileNotFoundError(f"Missing query features: {path_query}")
+    if not os.path.exists(path_database):
+        raise FileNotFoundError(f"Missing database features: {path_database}")
     score_computer = MegaDescriptor(path_query, path_database)
     similarity = score_computer.compute_similarity(ignore="diagonal")
     prediction = Prediction(df, similarity, k=len(df) - 1)
@@ -549,6 +553,65 @@ def evaluate_zakynthos_predictions(
             "top5": prediction.accuracy[mod]["top 5"],
         })
     return pd.DataFrame(rows)
+
+
+def compare_base_vs_lora(
+    df: pd.DataFrame,
+    features_dir: str,
+    flips: Sequence[bool] = (True, False),
+    grayscale: bool = False,
+    mods: Optional[List[str]] = None,
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """Run Zakynthos re-ID for base and LoRA and return long + side-by-side delta tables."""
+    if mods is None:
+        mods = [
+            "full",
+            "same orientation",
+            "different orientation",
+            "same year",
+            "different year",
+            "different both",
+        ]
+    results = []
+    for flip in flips:
+        for method_prefix in ("MegaDescriptor", "MegaDescriptorLoRA"):
+            results.append(
+                evaluate_zakynthos_predictions(
+                    df,
+                    features_dir,
+                    method_prefix=method_prefix,
+                    flip=flip,
+                    grayscale=grayscale,
+                    mods=list(mods),
+                )
+            )
+    results_df = pd.concat(results, ignore_index=True)
+    base = results_df[results_df["method"] == "MegaDescriptor"].rename(
+        columns={"top1": "base_top1", "top5": "base_top5"}
+    )
+    lora = results_df[results_df["method"] == "MegaDescriptorLoRA"].rename(
+        columns={"top1": "lora_top1", "top5": "lora_top5"}
+    )
+    comparison = base.merge(
+        lora[["flip", "mod", "lora_top1", "lora_top5"]],
+        on=["flip", "mod"],
+        how="inner",
+    )
+    comparison["delta_top1"] = comparison["lora_top1"] - comparison["base_top1"]
+    comparison["delta_top5"] = comparison["lora_top5"] - comparison["base_top5"]
+    comparison = comparison[
+        [
+            "flip",
+            "mod",
+            "base_top1",
+            "lora_top1",
+            "delta_top1",
+            "base_top5",
+            "lora_top5",
+            "delta_top5",
+        ]
+    ].sort_values(["flip", "mod"]).reset_index(drop=True)
+    return results_df, comparison
 
 
 def wildlife_dataset_from_df(
