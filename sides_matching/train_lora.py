@@ -26,10 +26,11 @@ DEFAULT_LORA_TARGETS = ("qkv", "proj", "fc1", "fc2")
 class TrainConfig:
     model_name: str = MODEL_NAME
     img_size: int = 384
-    batch_size: int = 16
+    # MegaDescriptor-L @ 384 needs small batches on Colab T4 (15GB).
+    batch_size: int = 2
     epochs: int = 20
-    lora_r: int = 16
-    lora_alpha: int = 32
+    lora_r: int = 8
+    lora_alpha: int = 16
     lora_dropout: float = 0.05
     lora_target_modules: Tuple[str, ...] = DEFAULT_LORA_TARGETS
     lr_lora: float = 1e-4
@@ -40,6 +41,9 @@ class TrainConfig:
     val_identity_fraction: float = 0.2
     early_stop_patience: int = 5
     seed: int = 42
+    use_amp: bool = True
+    grad_checkpointing: bool = True
+    num_workers: int = 2
 
 
 class ArcFaceHead(nn.Module):
@@ -217,11 +221,38 @@ def build_concat_dataloader(
     dataset = ConcatLabelledDataset(datasets, label_parts)
     return DataLoader(
         dataset,
-        batch_size=batch_size,
+        batch_size=max(1, int(batch_size)),
         shuffle=shuffle,
         num_workers=num_workers,
         pin_memory=torch.cuda.is_available(),
     )
+
+
+def clear_cuda_memory() -> None:
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.ipc_collect()
+
+
+def is_cuda_oom(exc: BaseException) -> bool:
+    message = str(exc).lower()
+    return isinstance(exc, torch.cuda.OutOfMemoryError) or (
+        isinstance(exc, RuntimeError) and "out of memory" in message
+    )
+
+
+def enable_backbone_grad_checkpointing(backbone: nn.Module) -> bool:
+    """Enable activation checkpointing on the timm / Peft-wrapped backbone if available."""
+    candidates = [backbone]
+    for attr in ("get_base_model", "model", "base_model"):
+        if hasattr(backbone, attr):
+            value = getattr(backbone, attr)
+            candidates.append(value() if callable(value) else value)
+    for candidate in candidates:
+        if hasattr(candidate, "set_grad_checkpointing"):
+            candidate.set_grad_checkpointing(True)
+            return True
+    return False
 
 
 def build_dataloader(
@@ -269,6 +300,7 @@ def build_training_model(
     config: TrainConfig,
     device: torch.device,
 ) -> MegaDescriptorLoRA:
+    clear_cuda_memory()
     backbone = create_backbone(config.model_name, pretrained=True)
     backbone = attach_lora(
         backbone,
@@ -277,6 +309,9 @@ def build_training_model(
         dropout=config.lora_dropout,
         target_modules=config.lora_target_modules,
     )
+    if config.grad_checkpointing:
+        enabled = enable_backbone_grad_checkpointing(backbone)
+        print(f'Gradient checkpointing: {"on" if enabled else "unavailable"}')
     embedding_dim = backbone.num_features
     arcface_head = ArcFaceHead(
         embedding_dim=embedding_dim,
@@ -325,19 +360,28 @@ def train_epoch(
     loader: DataLoader,
     optimizer: torch.optim.Optimizer,
     device: torch.device,
+    scaler: Optional[torch.cuda.amp.GradScaler] = None,
+    use_amp: bool = True,
 ) -> float:
     model.train()
     total_loss = 0.0
     n_batches = 0
+    amp_enabled = bool(use_amp and device.type == "cuda")
     for images, labels in loader:
         images = images.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True)
         optimizer.zero_grad(set_to_none=True)
-        logits = model(images, labels)
-        loss = F.cross_entropy(logits, labels)
-        loss.backward()
-        optimizer.step()
-        total_loss += loss.item()
+        with torch.autocast(device_type=device.type, enabled=amp_enabled):
+            logits = model(images, labels)
+            loss = F.cross_entropy(logits, labels)
+        if scaler is not None and amp_enabled:
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss.backward()
+            optimizer.step()
+        total_loss += float(loss.detach().item())
         n_batches += 1
     return total_loss / max(n_batches, 1)
 
@@ -347,17 +391,20 @@ def validate_epoch(
     model: MegaDescriptorLoRA,
     loader: DataLoader,
     device: torch.device,
+    use_amp: bool = True,
 ) -> Tuple[float, float]:
     model.eval()
     total_loss = 0.0
     correct = 0
     total = 0
+    amp_enabled = bool(use_amp and device.type == "cuda")
     for images, labels in loader:
         images = images.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True)
-        logits = model(images, labels)
-        loss = F.cross_entropy(logits, labels)
-        total_loss += loss.item()
+        with torch.autocast(device_type=device.type, enabled=amp_enabled):
+            logits = model(images, labels)
+            loss = F.cross_entropy(logits, labels)
+        total_loss += float(loss.item())
         preds = logits.argmax(dim=1)
         correct += (preds == labels).sum().item()
         total += labels.size(0)
@@ -371,15 +418,18 @@ def embedding_recall_at_1(
     model: MegaDescriptorLoRA,
     loader: DataLoader,
     device: torch.device,
+    use_amp: bool = True,
 ) -> float:
     """Cosine recall@1 on the validation split (same protocol as re-ID)."""
     model.eval()
     embeddings = []
     labels = []
+    amp_enabled = bool(use_amp and device.type == "cuda")
     for images, batch_labels in loader:
         images = images.to(device, non_blocking=True)
-        batch_embeddings = F.normalize(model.encode(images), dim=1)
-        embeddings.append(batch_embeddings.cpu())
+        with torch.autocast(device_type=device.type, enabled=amp_enabled):
+            batch_embeddings = F.normalize(model.encode(images), dim=1)
+        embeddings.append(batch_embeddings.float().cpu())
         labels.append(batch_labels)
     if not embeddings:
         return 0.0
