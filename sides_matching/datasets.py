@@ -2,12 +2,20 @@ import numpy as np
 import pandas as pd
 from wildlife_datasets import datasets
 
+def _pop_reserved(kwargs):
+    """Drop keys that wrappers set explicitly to avoid double-kwarg TypeErrors."""
+    cleaned = dict(kwargs)
+    cleaned.pop('img_load', None)
+    return cleaned
+
 def amvrakikos(root, transform=None, **kwargs):
+    kwargs = _pop_reserved(kwargs)
     dataset = datasets.AmvrakikosTurtles(root, img_load='auto', transform=transform, **kwargs)
     dataset.df = modify_dates(dataset.df)
     return dataset
 
 def reunion(root, transform=None, species=None, **kwargs):
+    kwargs = _pop_reserved(kwargs)
     dataset = datasets.ReunionTurtles(root, img_load='auto', transform=transform, **kwargs)
     if species is not None:
         filtered = dataset.df[dataset.df['species'] == species]
@@ -17,7 +25,7 @@ def reunion(root, transform=None, species=None, **kwargs):
         )
     dataset.df = modify_dates(dataset.df)
     return dataset
-    
+
 def reunion_green(root, **kwargs):
     return reunion(root, species='Green', **kwargs)
 
@@ -25,6 +33,7 @@ def reunion_hawksbill(root, **kwargs):
     return reunion(root, species='Hawksbill', **kwargs)
 
 def zakynthos(root, transform=None, **kwargs):
+    kwargs = _pop_reserved(kwargs)
     dataset = datasets.ZakynthosTurtles(root, img_load='auto', transform=transform, **kwargs)
     dataset.df = modify_dates(dataset.df)
     return dataset
