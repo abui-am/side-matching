@@ -1,7 +1,16 @@
 import numpy as np
 from scipy.spatial.distance import cdist
-from wildlife_tools.similarity import CosineSimilarity, MatchLightGlue
+from sklearn.metrics.pairwise import cosine_similarity
+from wildlife_tools.similarity import MatchLightGlue
 from .utils import get_features, unique_no_sort
+
+
+def as_feature_matrix(features) -> np.ndarray:
+    """Accept wildlife FeatureDataset pickles or raw ndarray feature matrices."""
+    if hasattr(features, "features"):
+        return np.asarray(features.features)
+    return np.asarray(features)
+
 
 class Data():
     def __init__(self, path_features_query, path_features_database):
@@ -18,8 +27,10 @@ class Data():
         # Set -infinity for ignored indices
         if ignore is not None:
             if ignore == 'diagonal':
-                if len(features_query) == len(features_database):
-                    ignore = [[i] for i in range(len(features_query))]
+                n_query = len(as_feature_matrix(features_query))
+                n_database = len(as_feature_matrix(features_database))
+                if n_query == n_database:
+                    ignore = [[i] for i in range(n_query)]
                 else:
                     raise Exception('For ignore=diagonal, query and database must correspond')
             for i in range(len(ignore)):
@@ -29,7 +40,13 @@ class Data():
 class MegaDescriptor(Data):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.matcher = CosineSimilarity()
+        # Prefer array-based cosine so LoRA ndarray pickles and DeepFeatures
+        # FeatureDataset pickles both work.
+        self.matcher = self._cosine_similarity
+
+    @staticmethod
+    def _cosine_similarity(query, database):
+        return cosine_similarity(as_feature_matrix(query), as_feature_matrix(database))
 
 class Aliked(Data):
     def __init__(self, *args, **kwargs):
