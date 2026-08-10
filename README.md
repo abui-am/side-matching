@@ -30,3 +30,11 @@ The code is divided into the notebooks:
 
 - The [first notebook](notebooks/compute_features.ipynb) downloads the three datasets and extracts features from all images.
 - The [second notebook](notebooks/matching.ipynb) uses the extracted features to compute similarities between images. Based on these similarities, it predicts which individual turtles are depicted in images. This predictions are then use to conclude that there is a significant similarity between the left and right profiles of individual turtles.
+
+### Base model comparison
+
+To compare base MegaDescriptor, ALIKED, calibrated fusion, and MD→ALIKED shortlist rerank (protocol + latest numbers):
+
+- Doc: [docs/base-model-comparison.md](docs/base-model-comparison.md)
+- Script: `scripts/compare_base_models.py`
+- Results CSV: [docs/results/base_model_comparison.csv](docs/results/base_model_comparison.csv)

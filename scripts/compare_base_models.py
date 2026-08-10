@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Compare base MegaDescriptor, ALIKED, calibrated fusion, and MD→ALIKED cascade.
 
+See docs/base-model-comparison.md for protocol and recorded results.
+
 Example:
   .venv/bin/python scripts/compare_base_models.py \\
     --features-dir /Users/abui/@code/tes/model/features \\
     --data-dir data \\
     --cache-dir /tmp/base_model_sims \\
-    --out /tmp/base_model_comparison.csv
+    --out docs/results/base_model_comparison.csv
 """
 
 from __future__ import annotations
