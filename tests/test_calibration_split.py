@@ -10,6 +10,7 @@ from sides_matching.evaluation import (
     filter_bilateral_df,
     identities_with_both_sides,
     split_calibration_one_per_side,
+    subset_identities_df,
 )
 
 
@@ -94,6 +95,13 @@ def test_split_raises_when_identity_not_bilateral():
     df = pd.DataFrame({"identity": ["x", "x"], "orientation": ["left", "left"]})
     with pytest.raises(ValueError, match="lacks left or right"):
         split_calibration_one_per_side(df, seed=0)
+
+
+def test_subset_identities_df():
+    df, _ = filter_bilateral_df(_toy_df())
+    sub = subset_identities_df(df, max_identities=2, seed=0)
+    assert sub["identity"].nunique() == 2
+    assert len(sub) < len(df)
 
 
 def test_split_raises_when_no_test_queries():

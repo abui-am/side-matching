@@ -61,6 +61,24 @@ def filter_bilateral_df(
     return filtered, keep_idx
 
 
+def subset_identities_df(
+    df: pd.DataFrame,
+    max_identities: int,
+    seed: int,
+    *,
+    identity_col: str = "identity",
+) -> pd.DataFrame:
+    """Keep rows for up to ``max_identities`` identities (seeded random sample)."""
+    if max_identities <= 0:
+        raise ValueError("max_identities must be positive")
+    identities = np.array(sorted(df[identity_col].unique()))
+    if len(identities) <= max_identities:
+        return df
+    rng = np.random.default_rng(seed)
+    chosen = sorted(rng.choice(identities, size=max_identities, replace=False))
+    return df[df[identity_col].isin(chosen)].reset_index(drop=True)
+
+
 def split_calibration_one_per_side(
     df: pd.DataFrame,
     seed: int,

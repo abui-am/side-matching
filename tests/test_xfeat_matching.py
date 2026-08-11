@@ -13,6 +13,7 @@ from sides_matching.xfeat_matching import (
     XFeatImageFeatures,
     XFeatMatcher,
     load_xfeat_image,
+    xfeat_cache_tag,
     xfeat_resize_tag,
 )
 
@@ -56,6 +57,20 @@ def test_xfeat_resize_tag():
     assert xfeat_resize_tag(max_size=800, square_size=None) == "max800"
     assert xfeat_resize_tag(max_size=None, square_size=512) == "sq512"
     assert xfeat_resize_tag(max_size=None, square_size=None) == "native"
+
+
+def test_xfeat_cache_tag_kepala():
+    assert xfeat_cache_tag(max_size=None, square_size=512, use_kepala=False) == "sq512"
+    assert xfeat_cache_tag(max_size=None, square_size=512, use_kepala=True) == "kepala_sq512"
+    assert (
+        xfeat_cache_tag(
+            max_size=None,
+            square_size=512,
+            use_kepala=True,
+            min_area_fraction=0.10,
+        )
+        == "kepala_min10_sq512"
+    )
 
 
 def test_load_xfeat_image_square_vs_native(tmp_path: Path):

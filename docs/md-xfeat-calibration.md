@@ -30,6 +30,8 @@ Query image (flipped)
        └─► A CalShortlist: calibrate MD + XFeat, average, rerank
 ```
 
+
+
 ## End-to-end benchmark flow
 
 Nothing is fine-tuned on turtle photos. **MegaDescriptor** and **XFeat** are frozen pretrained models. The only thing “learned” at runtime is the **isotonic + PCHIP calibrator** (score → hit-rate mapping), fit on calibration queries and applied before test evaluation.
@@ -83,6 +85,8 @@ flowchart TD
   rerank --> eval
 ```
 
+
+
 **Per test query** (closed-set re-ID):
 
 1. Query image is **horizontally flipped** (`flip=True`); gallery is unflipped.
@@ -92,11 +96,13 @@ flowchart TD
 
 **What is / isn't held out**
 
-| Stage | Uses calibration photos? | Uses test photos? |
-|---|---|---|
-| MD / XFeat feature extract | All kept photos (cached) | All kept photos |
-| Isotonic calibrator fit | Cal query rows only | No |
-| Accuracy reporting | No | Test query rows only |
+
+| Stage                      | Uses calibration photos? | Uses test photos?    |
+| -------------------------- | ------------------------ | -------------------- |
+| MD / XFeat feature extract | All kept photos (cached) | All kept photos      |
+| Isotonic calibrator fit    | Cal query rows only      | No                   |
+| Accuracy reporting         | No                       | Test query rows only |
+
 
 Gallery for a test query still contains **all** kept photos (including calibration photos of the same turtle). Test queries themselves never appear in the calibrator fit.
 
@@ -160,7 +166,7 @@ Plain isotonic regression produces a **stepwise** function (constant on interval
 - Unique calibrated values for nearby raw scores (better reranking)
 - No spurious overshoot between knots (monotonicity preserved)
 
-![Isotonic step function vs PCHIP-smoothed calibration curve](figures/isotonic_pchip_curve.png)
+Isotonic step function vs PCHIP-smoothed calibration curve
 
 *Synthetic XFeat-like calibration pairs. Orange steps: plain isotonic — nearby integer counts (e.g. 11 vs 12) can land on the same flat step. Blue curve: isotonic knots passed through PCHIP + strict tie-break — close scores get distinct calibrated heights, which helps shortlist reranking.*
 
@@ -282,10 +288,34 @@ Cal shortlist adds **no extra XFeat matches** vs naive cascade; overhead is O(n^
 | Parameter         | Value                                                     |
 | ----------------- | --------------------------------------------------------- |
 | Query flip        | `True` (opposite-side protocol)                           |
-| Shortlist N       | 10                                                        |
+| Shortlist \(N\) | 10 (default); or `--shortlist-fraction 0.3` / `0.4` → \(N = \mathrm{round}(f \times n)\) |
 | XFeat resize      | 512×512 square (`sq512`)                                  |
+| XFeat preprocessing | Full frame (default); optional `--yolo-kepala` head crop (see below) |
 | Calibration split | `one_per_side` — 1 left + 1 right per identity (`seed=0`) |
-| MD features       | Precomputed MegaDescriptor pickles                        |
+| MD features       | Precomputed MegaDescriptor pickles (full frame)           |
+
+### YOLO kepala (head) crop
+
+Optional preprocessing for **both MegaDescriptor and XFeat**: detect the turtle head with the Ultralytics model in [`yolo_kepala/`](../yolo_kepala/) (class `kepala`, weights default `kepala.pt`), crop with 5% padding, then run each model's resize. Order: **open → flip (query) → YOLO crop → resize**.
+
+- **MD:** 384×384 + ImageNet normalize (recomputed and cached when `--yolo-kepala`; precomputed full-frame pickles used otherwise)
+- **XFeat:** 512×512 square
+
+```bash
+.venv/bin/python scripts/compare_md_xfeat_cal_shortlist.py \
+  --datasets ReunionGreen \
+  --shortlist-n 10 \
+  --square-size 512 \
+  --yolo-kepala \
+  --cache-dir /tmp/xfeat_kepala_compare \
+  --out docs/results/reunion_md_xfeat_cal_shortlist_kepala_N10.csv
+```
+
+Cache keys include `kepala_` prefix (e.g. `kepala_sq512` for XFeat, `md_kepala_*` for MD) so cropped runs do not collide with full-frame caches.
+
+**Note:** Defaults `--yolo-conf 0.25` and `--yolo-min-area 0.10` skip weak or tiny boxes (crop only if detection confidence ≥ 0.25 **and** box area ≥ 10% of image); otherwise the full frame is used.
+
+
 
 
 
@@ -334,7 +364,42 @@ Results: `[docs/results/amvrakikos_md_xfeat_cal_shortlist_N10.csv](results/amvra
 
 Cal shortlist **+4.4 pp** top-1 over naive cascade. No identities excluded.
 
-Results: `[docs/results/reunion_hawksbill_md_xfeat_cal_shortlist_N10.csv](results/reunion_hawksbill_md_xfeat_cal_shortlist_N10.csv)`
+Results: [`docs/results/reunion_hawksbill_md_xfeat_cal_shortlist_N10.csv`](results/reunion_hawksbill_md_xfeat_cal_shortlist_N10.csv)
+
+### Shortlist size sweep: N=10 vs 30% vs 40% of gallery
+
+Same bilateral split and test queries. \(N = \mathrm{round}(f \times n)\):
+
+| Dataset | n | N @ 30% | N @ 40% |
+|---|---:|---:|---:|
+| ReunionGreen | 200 | 60 | 80 |
+| ReunionHawksbill | 136 | 41 | 54 |
+| Amvrakikos | 200 | 60 | 80 |
+
+| Dataset | N | Method | Full top-1 | Full top-5 | Opp. top-1 | Cal − naive |
+|---|---:|---|---:|---:|---:|---:|
+| ReunionGreen | 10 | MD→XFeat | 65.0% | 81.0% | 65.0% | — |
+| ReunionGreen | 10 | **Cal shortlist** | **71.0%** | 82.0% | **71.0%** | +6.0 pp |
+| ReunionGreen | 60 | MD→XFeat | 66.0% | 85.0% | 66.0% | — |
+| ReunionGreen | 60 | **Cal shortlist** | **75.0%** | 89.0% | **74.0%** | +9.0 pp |
+| ReunionGreen | 80 | MD→XFeat | 67.0% | 86.0% | 67.0% | — |
+| ReunionGreen | 80 | **Cal shortlist** | **74.0%** | 92.0% | **73.0%** | +7.0 pp |
+| ReunionHawksbill | 10 | MD→XFeat | 75.0% | 91.2% | 75.0% | — |
+| ReunionHawksbill | 10 | **Cal shortlist** | **79.4%** | 92.6% | **79.4%** | +4.4 pp |
+| ReunionHawksbill | 41 | MD→XFeat | 73.5% | 91.2% | 73.5% | — |
+| ReunionHawksbill | 41 | **Cal shortlist** | **80.9%** | 91.2% | **80.9%** | +7.4 pp |
+| ReunionHawksbill | 54 | MD→XFeat | 76.5% | 92.6% | 76.5% | — |
+| ReunionHawksbill | 54 | **Cal shortlist** | **83.8%** | 94.1% | **83.8%** | +7.4 pp |
+| Amvrakikos | 10 | MD→XFeat | 58.0% | 80.0% | 58.0% | — |
+| Amvrakikos | 10 | **Cal shortlist** | **64.0%** | 77.0% | **64.0%** | +6.0 pp |
+| Amvrakikos | 60 | MD→XFeat | 57.0% | 73.0% | 57.0% | — |
+| Amvrakikos | 60 | **Cal shortlist** | **68.0%** | 80.0% | **68.0%** | +11.0 pp |
+| Amvrakikos | 80 | MD→XFeat | 57.0% | 74.0% | 57.0% | — |
+| Amvrakikos | 80 | **Cal shortlist** | **70.0%** | 79.0% | **70.0%** | +13.0 pp |
+
+**Takeaways:** Cal shortlist top-1 peaks differ by dataset — ReunionGreen best at **N=60 (75.0%)**, ReunionHawksbill at **N=54 (83.8%)**, Amvrakikos at **N=80 (70.0%)**. Larger N always increases cal-vs-naive gap (+7–13 pp at 30–40%). Naive XFeat can plateau or drop with very wide shortlists (Amvrakikos naive flat at 57–58% for N≥60); calibration still extracts value. ReunionHawksbill benefits monotonically from larger N for both naive and cal.
+
+Results: [N=30%](results/md_xfeat_cal_shortlist_N30pct.csv) · [N=40%](results/md_xfeat_cal_shortlist_N40pct.csv)
 
 Related comparisons (ReunionGreen):
 
@@ -369,6 +434,22 @@ Related comparisons (ReunionGreen):
   --square-size 512 \
   --cache-dir /tmp/xfeat_resize_compare \
   --out docs/results/reunion_hawksbill_md_xfeat_cal_shortlist_N10.csv
+
+# All datasets, N = 30% of gallery (round(0.3 × n))
+.venv/bin/python scripts/compare_md_xfeat_cal_shortlist.py \
+  --datasets ReunionGreen ReunionHawksbill Amvrakikos \
+  --shortlist-fraction 0.3 \
+  --square-size 512 \
+  --cache-dir /tmp/xfeat_resize_compare \
+  --out docs/results/md_xfeat_cal_shortlist_N30pct.csv
+
+# All datasets, N = 40% of gallery (round(0.4 × n))
+.venv/bin/python scripts/compare_md_xfeat_cal_shortlist.py \
+  --datasets ReunionGreen ReunionHawksbill Amvrakikos \
+  --shortlist-fraction 0.4 \
+  --square-size 512 \
+  --cache-dir /tmp/xfeat_resize_compare \
+  --out docs/results/md_xfeat_cal_shortlist_N40pct.csv
 ```
 
 First run builds XFeat features and shortlist matrix (~minutes on MPS for n=200); later runs hit `.npy` cache.
@@ -376,13 +457,13 @@ First run builds XFeat features and shortlist matrix (~minutes on MPS for n=200)
 Other scripts:
 
 
-| Script                                      | Purpose                          |
-| ------------------------------------------- | -------------------------------- |
-| `scripts/compare_md_xfeat_resize.py`        | 512×512 vs native resize         |
-| `scripts/compare_md_xfeat_vs_loma_sq512.py` | XFeat vs LoMa at sq512           |
-| `scripts/compare_md_xfeat_loma_n.py`        | XFeat vs LoMa, default max800    |
-| `scripts/sweep_md_xfeat_n.py`               | Shortlist N sweep                |
-| `scripts/benchmark_smart_rerank.py`         | Cal shortlist + gates for ALIKED |
+| Script                                      | Purpose                             |
+| ------------------------------------------- | ----------------------------------- |
+| `scripts/compare_md_xfeat_resize.py`        | 512×512 vs native resize            |
+| `scripts/compare_md_xfeat_vs_loma_sq512.py` | XFeat vs LoMa at sq512              |
+| `scripts/compare_md_xfeat_loma_n.py`        | XFeat vs LoMa, default max800       |
+| `scripts/sweep_md_xfeat_n.py`               | Shortlist N sweep                   |
+| `scripts/benchmark_smart_rerank.py`         | Cal shortlist + gates for ALIKED    |
 | `scripts/plot_isotonic_pchip_curve.py`      | Regenerate calibration curve figure |
 
 

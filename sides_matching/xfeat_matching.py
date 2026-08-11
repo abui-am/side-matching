@@ -13,10 +13,15 @@ from typing import Sequence
 import numpy as np
 import torch
 from kornia.feature import XFeat
-from PIL import Image, ImageOps
+from PIL import Image
 from tqdm import tqdm
 
 from sides_matching.loma_matching import resolve_image_paths
+from sides_matching.yolo_kepala_preprocessing import (
+    KepalaCropper,
+    load_rgb_pil,
+    preprocess_tag,
+)
 
 XFEAT_WEIGHTS_URL = "https://github.com/verlab/accelerated_features/raw/main/weights/xfeat.pt"
 XFEAT_WEIGHTS_PATH = Path.home() / ".cache" / "torch" / "hub" / "checkpoints" / "xfeat.pt"
@@ -62,17 +67,18 @@ def load_xfeat_image(
     device: torch.device,
     max_size: int | None = 800,
     square_size: int | None = None,
+    cropper: KepalaCropper | None = None,
 ) -> torch.Tensor:
     """Load RGB image as (1, 3, H, W) float in [0, 1].
+
+    Preprocessing order: open → flip (optional) → YOLO kepala crop (optional) → resize.
 
     Resize modes (first match wins):
     - square_size: force (square_size, square_size)
     - max_size: preserve aspect, max side = max_size
     - both None: no resize (native resolution)
     """
-    pil_im = Image.open(path).convert("RGB")
-    if flip:
-        pil_im = ImageOps.mirror(pil_im)
+    pil_im = load_rgb_pil(path, flip=flip, cropper=cropper)
     if square_size is not None:
         pil_im = pil_im.resize((square_size, square_size))
     elif max_size is not None:
@@ -91,6 +97,20 @@ def xfeat_resize_tag(*, max_size: int | None, square_size: int | None) -> str:
     return "native"
 
 
+def xfeat_cache_tag(
+    *,
+    max_size: int | None,
+    square_size: int | None,
+    use_kepala: bool,
+    min_area_fraction: float = 0.0,
+) -> str:
+    resize = xfeat_resize_tag(max_size=max_size, square_size=square_size)
+    pre = preprocess_tag(use_kepala=use_kepala, min_area_fraction=min_area_fraction)
+    if pre == "full":
+        return resize
+    return f"{pre}_{resize}"
+
+
 class XFeatMatcher:
     """XFeat sparse detector/descriptor with MNN match-count similarity."""
 
@@ -102,13 +122,24 @@ class XFeatMatcher:
         max_size: int | None = 800,
         square_size: int | None = None,
         min_cossim: float = 0.82,
+        cropper: KepalaCropper | None = None,
     ) -> None:
         self.device = torch.device(device)
         self.top_k = top_k
         self.max_size = max_size
         self.square_size = square_size
         self.min_cossim = min_cossim
-        self.resize_tag = xfeat_resize_tag(max_size=max_size, square_size=square_size)
+        self.cropper = cropper
+        self.use_kepala = cropper is not None
+        self.min_area_fraction = (
+            cropper.min_area_fraction if cropper is not None else 0.0
+        )
+        self.resize_tag = xfeat_cache_tag(
+            max_size=max_size,
+            square_size=square_size,
+            use_kepala=self.use_kepala,
+            min_area_fraction=self.min_area_fraction,
+        )
         model = XFeat(top_k=top_k)
         load_xfeat_weights(model)
         self.model = model.to(self.device).eval()
@@ -120,6 +151,7 @@ class XFeatMatcher:
             device=self.device,
             max_size=self.max_size,
             square_size=self.square_size,
+            cropper=self.cropper,
         )
         with torch.inference_mode():
             out = self.model.detectAndCompute(image, top_k=self.top_k)[0]
@@ -171,11 +203,18 @@ def _feature_cache_path(
 
 
 def _shortlist_similarity_cache_path(
-    cache_dir: Path, name: str, flip: bool, top_n: int, *, resize_tag: str = "max800"
+    cache_dir: Path,
+    name: str,
+    flip: bool,
+    top_n: int,
+    *,
+    resize_tag: str = "max800",
+    md_preprocess: str = "full",
 ) -> Path:
+    md_part = f"_md{md_preprocess}" if md_preprocess != "full" else ""
     if resize_tag == "max800":
-        return cache_dir / f"{name}_xfeat_flip{flip}_N{top_n}.npy"
-    return cache_dir / f"{name}_xfeat_{resize_tag}_flip{flip}_N{top_n}.npy"
+        return cache_dir / f"{name}_xfeat_flip{flip}{md_part}_N{top_n}.npy"
+    return cache_dir / f"{name}_xfeat_{resize_tag}{md_part}_flip{flip}_N{top_n}.npy"
 
 
 def md_shortlists(md_sim: np.ndarray, top_n: int) -> list[np.ndarray]:
@@ -222,8 +261,17 @@ def load_or_compute_xfeat_shortlist_similarity(
     """Match XFeat only on MD top-N candidates; query flip only, gallery unflipped."""
     matcher = matcher or XFeatMatcher(device="cpu")
     cache_dir.mkdir(parents=True, exist_ok=True)
+    md_preprocess = preprocess_tag(
+        use_kepala=matcher.use_kepala,
+        min_area_fraction=matcher.min_area_fraction,
+    )
     sim_cache = _shortlist_similarity_cache_path(
-        cache_dir, name, flip_query, top_n, resize_tag=matcher.resize_tag
+        cache_dir,
+        name,
+        flip_query,
+        top_n,
+        resize_tag=matcher.resize_tag,
+        md_preprocess=md_preprocess,
     )
     if sim_cache.is_file():
         print(f"  XFeat {matcher.resize_tag} N={top_n} cache hit {sim_cache}")

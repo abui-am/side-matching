@@ -1,0 +1,58 @@
+{
+  "rows": [
+    {
+      "dataset": "ReunionGreen",
+      "method": "MegaDescriptor",
+      "flip": true,
+      "shortlist_n": 32,
+      "shortlist_fraction": 0.4,
+      "resize": "kepala_sq512",
+      "yolo_kepala": true,
+      "split_mode": "one_per_side",
+      "seed": 0,
+      "n_identities": 20,
+      "n_excluded_identities": 0,
+      "n_images": 80,
+      "n_queries": 40,
+      "full_top1": 0.37500000000000006,
+      "full_top5": 0.6250000000000002,
+      "opp_top1": 0.325
+    },
+    {
+      "dataset": "ReunionGreen",
+      "method": "MD\u2192XFeat N=32",
+      "flip": true,
+      "shortlist_n": 32,
+      "shortlist_fraction": 0.4,
+      "resize": "kepala_sq512",
+      "yolo_kepala": true,
+      "split_mode": "one_per_side",
+      "seed": 0,
+      "n_identities": 20,
+      "n_excluded_identities": 0,
+      "n_images": 80,
+      "n_queries": 40,
+      "full_top1": 0.4500000000000001,
+      "full_top5": 0.6750000000000003,
+      "opp_top1": 0.4500000000000001
+    },
+    {
+      "dataset": "ReunionGreen",
+      "method": "A CalShortlist N=32",
+      "flip": true,
+      "shortlist_n": 32,
+      "shortlist_fraction": 0.4,
+      "resize": "kepala_sq512",
+      "yolo_kepala": true,
+      "split_mode": "one_per_side",
+      "seed": 0,
+      "n_identities": 20,
+      "n_excluded_identities": 0,
+      "n_images": 80,
+      "n_queries": 40,
+      "full_top1": 0.4250000000000001,
+      "full_top5": 0.6750000000000003,
+      "opp_top1": 0.4250000000000001
+    }
+  ]
+}

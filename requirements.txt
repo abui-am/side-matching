@@ -9,3 +9,4 @@ DeDoDe @ git+https://github.com/Parskatt/DeDoDe.git
 einops
 opencv-python
 tyro
+ultralytics>=8.3.0

@@ -1,0 +1,10 @@
+dataset,method,flip,shortlist_n,shortlist_fraction,resize,yolo_kepala,split_mode,seed,max_identities,n_identities,n_excluded_identities,n_images,n_queries,full_top1,full_top5,opp_top1
+ReunionGreen,MegaDescriptor,True,80,0.4,kepala_min10_sq512,True,one_per_side,0,,50,0,200,100,0.5600000000000003,0.8000000000000005,0.5300000000000002
+ReunionGreen,MD→XFeat N=80,True,80,0.4,kepala_min10_sq512,True,one_per_side,0,,50,0,200,100,0.6700000000000004,0.8500000000000005,0.6700000000000004
+ReunionGreen,A CalShortlist N=80,True,80,0.4,kepala_min10_sq512,True,one_per_side,0,,50,0,200,100,0.7400000000000004,0.9100000000000006,0.7300000000000004
+ReunionHawksbill,MegaDescriptor,True,54,0.4,kepala_min10_sq512,True,one_per_side,0,,34,0,136,68,0.6029411764705879,0.8970588235294104,0.6029411764705879
+ReunionHawksbill,MD→XFeat N=54,True,54,0.4,kepala_min10_sq512,True,one_per_side,0,,34,0,136,68,0.7647058823529402,0.9264705882352926,0.7647058823529402
+ReunionHawksbill,A CalShortlist N=54,True,54,0.4,kepala_min10_sq512,True,one_per_side,0,,34,0,136,68,0.8382352941176459,0.9411764705882337,0.8382352941176459
+Amvrakikos,MegaDescriptor,True,80,0.4,kepala_min10_sq512,True,one_per_side,0,,50,0,200,100,0.35000000000000014,0.6300000000000003,0.3300000000000001
+Amvrakikos,MD→XFeat N=80,True,80,0.4,kepala_min10_sq512,True,one_per_side,0,,50,0,200,100,0.5800000000000003,0.7300000000000004,0.5800000000000003
+Amvrakikos,A CalShortlist N=80,True,80,0.4,kepala_min10_sq512,True,one_per_side,0,,50,0,200,100,0.6200000000000003,0.8200000000000005,0.6200000000000003

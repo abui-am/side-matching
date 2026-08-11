@@ -1,0 +1,4 @@
+dataset,method,flip,shortlist_n,shortlist_fraction,resize,yolo_kepala,split_mode,seed,max_identities,n_identities,n_excluded_identities,n_images,n_queries,full_top1,full_top5,opp_top1
+ReunionGreen,MegaDescriptor,True,32,0.4,kepala_sq512,True,one_per_side,0,20,20,0,80,40,0.5500000000000002,0.8000000000000004,0.5000000000000001
+ReunionGreen,MD→XFeat N=32,True,32,0.4,kepala_sq512,True,one_per_side,0,20,20,0,80,40,0.7000000000000003,0.7500000000000003,0.7000000000000003
+ReunionGreen,A CalShortlist N=32,True,32,0.4,kepala_sq512,True,one_per_side,0,20,20,0,80,40,0.7000000000000003,0.8000000000000004,0.6750000000000003

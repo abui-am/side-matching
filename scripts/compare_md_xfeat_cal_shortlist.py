@@ -34,11 +34,20 @@ from sides_matching.evaluation import (  # noqa: E402
     filter_bilateral_df,
     identities_with_both_sides,
     split_calibration_one_per_side,
+    subset_identities_df,
 )
 from sides_matching.predictions import _calibrate_matrix  # noqa: E402
+from sides_matching.megadescriptor_matching import (  # noqa: E402
+    MegaDescriptorExtractor,
+    load_or_compute_md_similarity,
+)
 from sides_matching.xfeat_matching import (  # noqa: E402
     XFeatMatcher,
     load_or_compute_xfeat_shortlist_similarity,
+)
+from sides_matching.yolo_kepala_preprocessing import (  # noqa: E402
+    DEFAULT_KEPALA_WEIGHTS,
+    KepalaCropper,
 )
 
 
@@ -98,9 +107,50 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--datasets", nargs="+", default=["ReunionGreen"], choices=sorted(DATASETS))
     p.add_argument("--device", default=default_device())
     p.add_argument("--shortlist-n", type=int, default=10)
+    p.add_argument(
+        "--shortlist-fraction",
+        type=float,
+        default=None,
+        help="If set, N = round(fraction × n_images) per dataset (overrides --shortlist-n)",
+    )
     p.add_argument("--square-size", type=int, default=512)
     p.add_argument("--img-size", type=int, default=384)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument(
+        "--max-identities",
+        type=int,
+        default=None,
+        help="If set, randomly sample this many bilateral identities (seeded)",
+    )
+    p.add_argument(
+        "--yolo-kepala",
+        action="store_true",
+        help="Crop images to YOLO kepala (head) box before MD and XFeat extraction",
+    )
+    p.add_argument(
+        "--yolo-weights",
+        type=Path,
+        default=DEFAULT_KEPALA_WEIGHTS,
+        help="Ultralytics weights for kepala detector",
+    )
+    p.add_argument(
+        "--yolo-conf",
+        type=float,
+        default=0.25,
+        help="Minimum detection confidence for kepala crop",
+    )
+    p.add_argument(
+        "--yolo-pad",
+        type=float,
+        default=0.05,
+        help="Fractional padding around detected kepala box",
+    )
+    p.add_argument(
+        "--yolo-min-area",
+        type=float,
+        default=0.10,
+        help="Minimum detected box area (fraction of image) to apply crop",
+    )
     p.add_argument(
         "--out",
         type=Path,
@@ -111,10 +161,40 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    matcher = XFeatMatcher(device=args.device, max_size=None, square_size=args.square_size)
+    cropper = None
+    md_extractor = None
+    if args.yolo_kepala:
+        cropper = KepalaCropper(
+            weights=args.yolo_weights,
+            conf=args.yolo_conf,
+            pad_fraction=args.yolo_pad,
+            min_area_fraction=args.yolo_min_area,
+        )
+        md_extractor = MegaDescriptorExtractor(
+            device=args.device,
+            img_size=args.img_size,
+            cropper=cropper,
+        )
+    matcher = XFeatMatcher(
+        device=args.device,
+        max_size=None,
+        square_size=args.square_size,
+        cropper=cropper,
+    )
     print(
-        f"device={args.device} N={args.shortlist_n} XFeat={matcher.resize_tag} "
+        f"device={args.device} XFeat={matcher.resize_tag} "
         f"split={SPLIT_MODE} seed={args.seed}"
+        + (f" yolo_kepala={args.yolo_weights.name}" if args.yolo_kepala else "")
+        + (
+            f" shortlist_fraction={args.shortlist_fraction}"
+            if args.shortlist_fraction is not None
+            else f" shortlist_n={args.shortlist_n}"
+        )
+        + (
+            f" max_identities={args.max_identities}"
+            if args.max_identities is not None
+            else ""
+        )
     )
 
     rows: list[dict] = []
@@ -134,32 +214,59 @@ def main() -> None:
         bilateral = identities_with_both_sides(df_full)
         n_excluded_identities = n_identities_full - len(bilateral)
 
-        df, keep_idx = filter_bilateral_df(df_full)
+        df, _ = filter_bilateral_df(df_full)
+        if args.max_identities is not None:
+            df = subset_identities_df(df, args.max_identities, seed=args.seed)
         n = len(df)
-        paths_full = df_full["path"].tolist()
+        n_identities = int(df["identity"].nunique())
+        if args.shortlist_fraction is not None:
+            if not 0.0 < args.shortlist_fraction <= 1.0:
+                raise ValueError("shortlist-fraction must be in (0, 1]")
+            shortlist_n = max(1, int(round(n * args.shortlist_fraction)))
+        else:
+            shortlist_n = args.shortlist_n
+        cache_name = (
+            f"{name}_id{args.max_identities}"
+            if args.max_identities is not None
+            else name
+        )
+        paths = df["path"].tolist()
+        path_to_full = {p: i for i, p in enumerate(df_full["path"].tolist())}
+        full_idx = np.array([path_to_full[p] for p in paths], dtype=np.int64)
         print(
-            f"\n=== {name}: n={n_full}->{n} identities={len(bilateral)} "
-            f"(excluded {n_excluded_identities}) flip={flip} N={args.shortlist_n} ==="
+            f"\n=== {name}: n={n_full}->{n} identities={n_identities} "
+            f"(bilateral pool {len(bilateral)}, excluded {n_excluded_identities}) "
+            f"flip={flip} N={shortlist_n} ==="
         )
 
         md_q = args.features_dir / f"MegaDescriptor_{name}_flip={flip}_grayscale=False.pickle"
         md_db = args.features_dir / f"MegaDescriptor_{name}_flip=False_grayscale=False.pickle"
-        md_sim_full = MegaDescriptor(str(md_q), str(md_db)).compute_similarity(
-            ignore="diagonal"
-        )
-        md_sim = md_sim_full[np.ix_(keep_idx, keep_idx)]
+        if args.yolo_kepala:
+            assert md_extractor is not None
+            md_sim = load_or_compute_md_similarity(
+                name=cache_name,
+                data_root=root,
+                paths=paths,
+                flip_query=flip,
+                cache_dir=args.cache_dir,
+                extractor=md_extractor,
+            )
+        else:
+            md_sim_full = MegaDescriptor(str(md_q), str(md_db)).compute_similarity(
+                ignore="diagonal"
+            )
+            md_sim = md_sim_full[np.ix_(full_idx, full_idx)]
 
-        xfeat_sim_full = load_or_compute_xfeat_shortlist_similarity(
-            name=name,
+        xfeat_sim = load_or_compute_xfeat_shortlist_similarity(
+            name=cache_name,
             data_root=root,
-            paths=paths_full,
+            paths=paths,
             flip_query=flip,
-            md_sim=md_sim_full,
-            top_n=args.shortlist_n,
+            md_sim=md_sim,
+            top_n=shortlist_n,
             cache_dir=args.cache_dir,
             matcher=matcher,
         )
-        xfeat_sim = xfeat_sim_full[np.ix_(keep_idx, keep_idx)]
 
         val_idx, test_idx = split_calibration_one_per_side(df, seed=args.seed)
         print(
@@ -181,14 +288,14 @@ def main() -> None:
         cal_md = _calibrate_matrix(fused.calibrators[0], md_sim)
         cal_xfeat = _calibrate_matrix(fused.calibrators[1], xfeat_sim)
         cal_short = calibrated_shortlist_fusion(
-            md_sim, cal_md, cal_xfeat, args.shortlist_n
+            md_sim, cal_md, cal_xfeat, shortlist_n
         )
-        naive_casc = cascade_similarity(md_sim, xfeat_sim, args.shortlist_n)
+        naive_casc = cascade_similarity(md_sim, xfeat_sim, shortlist_n)
 
         methods = {
             "MegaDescriptor": md_sim,
-            f"MD→XFeat N={args.shortlist_n}": naive_casc,
-            f"A CalShortlist N={args.shortlist_n}": cal_short,
+            f"MD→XFeat N={shortlist_n}": naive_casc,
+            f"A CalShortlist N={shortlist_n}": cal_short,
         }
         for method, sim in methods.items():
             pred = Prediction(df, sim, k=n - 1, query_indices=test_idx)
@@ -197,11 +304,14 @@ def main() -> None:
                 "dataset": name,
                 "method": method,
                 "flip": flip,
-                "shortlist_n": args.shortlist_n,
+                "shortlist_n": shortlist_n,
+                "shortlist_fraction": args.shortlist_fraction,
                 "resize": matcher.resize_tag,
+                "yolo_kepala": args.yolo_kepala,
                 "split_mode": SPLIT_MODE,
                 "seed": args.seed,
-                "n_identities": len(bilateral),
+                "max_identities": args.max_identities,
+                "n_identities": n_identities,
                 "n_excluded_identities": n_excluded_identities,
                 "n_images": n,
                 "n_queries": int(len(pred.true)),
