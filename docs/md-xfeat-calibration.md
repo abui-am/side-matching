@@ -2,7 +2,7 @@
 
 How **MegaDescriptor → XFeat** shortlist reranking works, what **isotonic + PCHIP** calibration means, and how **A CalShortlist** differs from a naive cascade.
 
-Script: [`scripts/compare_md_xfeat_cal_shortlist.py`](../scripts/compare_md_xfeat_cal_shortlist.py)  
+Script: `[scripts/compare_md_xfeat_cal_shortlist.py](../scripts/compare_md_xfeat_cal_shortlist.py)`  
 Results: [ReunionGreen](results/reunion_md_xfeat_cal_shortlist_N10.csv) · [ReunionHawksbill](results/reunion_hawksbill_md_xfeat_cal_shortlist_N10.csv) · [Amvrakikos](results/amvrakikos_md_xfeat_cal_shortlist_N10.csv)
 
 ## Pipeline overview
@@ -29,6 +29,76 @@ Query image (flipped)
        │
        └─► A CalShortlist: calibrate MD + XFeat, average, rerank
 ```
+
+## End-to-end benchmark flow
+
+Nothing is fine-tuned on turtle photos. **MegaDescriptor** and **XFeat** are frozen pretrained models. The only thing “learned” at runtime is the **isotonic + PCHIP calibrator** (score → hit-rate mapping), fit on calibration queries and applied before test evaluation.
+
+```mermaid
+flowchart TD
+  subgraph data [Data prep]
+    load[Load dataset dataframe]
+    bilateral[Keep identities with left AND right]
+    drop[Drop unilateral identities]
+    load --> bilateral --> drop
+  end
+
+  subgraph sim [Similarity matrices — all kept photos]
+    md[MegaDescriptor cosine n×n]
+    xfeat[XFeat shortlist match counts at sq512]
+    md --> xfeat
+  end
+
+  subgraph split [Bilateral split seed=0]
+    calPick["Calibration queries: 1 left + 1 right per identity"]
+    testPick["Test queries: all remaining photos"]
+    calPick --> testPick
+  end
+
+  subgraph calTrain [Calibrator fit — calibration queries only]
+    pairs["Collect score, label pairs from cal query rows"]
+    iso[Isotonic regression per stream]
+    pchip[PCHIP smooth curve]
+    pairs --> iso --> pchip
+  end
+
+  subgraph rerank [Rerank each query]
+    mdOnly[MegaDescriptor ranking]
+    naive["MD→XFeat N: lexsort raw XFeat, MD tie-break"]
+    calShort["A CalShortlist N: 0.5 × cal MD + cal XFeat"]
+  end
+
+  subgraph eval [Evaluate on test queries only]
+    top1[Report full top-1 / top-5 / opp top-1]
+  end
+
+  drop --> md
+  drop --> split
+  xfeat --> calTrain
+  pchip --> calShort
+  split --> calTrain
+  split --> eval
+  xfeat --> rerank
+  md --> rerank
+  rerank --> eval
+```
+
+**Per test query** (closed-set re-ID):
+
+1. Query image is **horizontally flipped** (`flip=True`); gallery is unflipped.
+2. Rank all gallery photos (self-match blocked on diagonal).
+3. **Hit** if the true turtle identity appears in top-1 or top-5.
+4. **Opp. top-1** ignores same-side same-identity gallery hits (opposite-profile emphasis).
+
+**What is / isn't held out**
+
+| Stage | Uses calibration photos? | Uses test photos? |
+|---|---|---|
+| MD / XFeat feature extract | All kept photos (cached) | All kept photos |
+| Isotonic calibrator fit | Cal query rows only | No |
+| Accuracy reporting | No | Test query rows only |
+
+Gallery for a test query still contains **all** kept photos (including calibration photos of the same turtle). Test queries themselves never appear in the calibrator fit.
 
 ## What is isotonic + PCHIP?
 
@@ -90,6 +160,10 @@ Plain isotonic regression produces a **stepwise** function (constant on interval
 - Unique calibrated values for nearby raw scores (better reranking)
 - No spurious overshoot between knots (monotonicity preserved)
 
+![Isotonic step function vs PCHIP-smoothed calibration curve](figures/isotonic_pchip_curve.png)
+
+*Synthetic XFeat-like calibration pairs. Orange steps: plain isotonic — nearby integer counts (e.g. 11 vs 12) can land on the same flat step. Blue curve: isotonic knots passed through PCHIP + strict tie-break — close scores get distinct calibrated heights, which helps shortlist reranking.*
+
 In code (`IsotonicCalibration`):
 
 1. Fit `sklearn.isotonic.IsotonicRegression` on validation pairs.
@@ -103,9 +177,7 @@ A tiny **strict adjustment** (`y + score * eps`) is added so ties are broken con
 
 After calibrating each stream separately:
 
-
 \text{fused}(i, j) = \tfrac{1}{2}\bigl(\text{calmd}(i,j) + \text{calxfeat}(i,j)\bigr)
-
 
 Only gallery index j in query i's MD top-N get finite XFeat scores; the rest stay -\infty.
 
@@ -130,7 +202,7 @@ MD→XFeat cal shortlist benchmarks use a **bilateral per-identity split** (not 
 3. **Test queries**: all other photos of those identities (including unknown-orientation views such as Amvrakikos top shots — test only, never calibration).
 4. Fit isotonic calibrators on calibration query rows; report accuracy on test queries only (same test set for MD, naive XFeat, and cal shortlist).
 
-Implementation: [`filter_bilateral_df`](sides_matching/evaluation.py), [`split_calibration_one_per_side`](sides_matching/evaluation.py) in `sides_matching/evaluation.py`.
+Implementation: `[filter_bilateral_df](sides_matching/evaluation.py)`, `[split_calibration_one_per_side](sides_matching/evaluation.py)` in `sides_matching/evaluation.py`.
 
 ### Naive cascade (lexsort)
 
@@ -160,11 +232,13 @@ Match counts are discrete. In a shortlist of N=10, several candidates often shar
 
 **4. Seen in our numbers**
 
-| Dataset | MD top-1 | Naive MD→XFeat | A CalShortlist | Gap (cal − naive) |
-|---|---:|---:|---:|---:|
-| ReunionGreen | 57.0% | 65.0% | 71.0% | +6.0 pp |
-| ReunionHawksbill | 60.3% | 75.0% | 79.4% | +4.4 pp |
-| Amvrakikos | 51.0% | 58.0% | 64.0% | +6.0 pp |
+
+| Dataset          | MD top-1 | Naive MD→XFeat | A CalShortlist | Gap (cal − naive) |
+| ---------------- | -------- | -------------- | -------------- | ----------------- |
+| ReunionGreen     | 57.0%    | 65.0%          | 71.0%          | +6.0 pp           |
+| ReunionHawksbill | 60.3%    | 75.0%          | 79.4%          | +4.4 pp           |
+| Amvrakikos       | 51.0%    | 58.0%          | 64.0%          | +6.0 pp           |
+
 
 On Amvrakikos, naive cascade adds +7 pp over MD on the test split; cal shortlist adds another +6 pp by fusing calibrated scores instead of cascading raw ones.
 
@@ -204,58 +278,70 @@ Cal shortlist adds **no extra XFeat matches** vs naive cascade; overhead is O(n^
 
 ## Settings (benchmark)
 
-| Parameter | Value |
-|---|---|
-| Query flip | `True` (opposite-side protocol) |
-| Shortlist \(N\) | 10 |
-| XFeat resize | 512×512 square (`sq512`) |
+
+| Parameter         | Value                                                     |
+| ----------------- | --------------------------------------------------------- |
+| Query flip        | `True` (opposite-side protocol)                           |
+| Shortlist N       | 10                                                        |
+| XFeat resize      | 512×512 square (`sq512`)                                  |
 | Calibration split | `one_per_side` — 1 left + 1 right per identity (`seed=0`) |
-| MD features | Precomputed MegaDescriptor pickles |
+| MD features       | Precomputed MegaDescriptor pickles                        |
+
+
+
 
 ## Results (2026-08-11)
 
 Evaluated on **test queries** after bilateral split (one left + one right per identity held out for calibration). All three methods use the same test set.
 
-### ReunionGreen (\(n=200\), 50 identities; test \(n=100\))
+### ReunionGreen (n=200, 50 identities; test n=100)
 
-| Method | Full top-1 | Full top-5 | Opp. top-1 |
-|---|---:|---:|---:|
-| MegaDescriptor | 57.0% | 80.0% | 54.0% |
-| MD→XFeat N=10 | 65.0% | 81.0% | 65.0% |
-| **A CalShortlist N=10** | **71.0%** | 82.0% | **71.0%** |
+
+| Method                  | Full top-1 | Full top-5 | Opp. top-1 |
+| ----------------------- | ---------- | ---------- | ---------- |
+| MegaDescriptor          | 57.0%      | 80.0%      | 54.0%      |
+| MD→XFeat N=10           | 65.0%      | 81.0%      | 65.0%      |
+| **A CalShortlist N=10** | **71.0%**  | 82.0%      | **71.0%**  |
+
 
 Cal shortlist **+6.0 pp** top-1 over naive cascade. No identities excluded (all 50 have left + right).
 
-Results: [`docs/results/reunion_md_xfeat_cal_shortlist_N10.csv`](results/reunion_md_xfeat_cal_shortlist_N10.csv)
+Results: `[docs/results/reunion_md_xfeat_cal_shortlist_N10.csv](results/reunion_md_xfeat_cal_shortlist_N10.csv)`
 
-### Amvrakikos (\(n=200\), 50 identities; test \(n=100\))
+### Amvrakikos (n=200, 50 identities; test n=100)
 
-| Method | Full top-1 | Full top-5 | Opp. top-1 |
-|---|---:|---:|---:|
-| MegaDescriptor | 51.0% | 75.0% | 45.0% |
-| MD→XFeat N=10 | 58.0% | 80.0% | 58.0% |
-| **A CalShortlist N=10** | **64.0%** | 77.0% | **64.0%** |
+
+| Method                  | Full top-1 | Full top-5 | Opp. top-1 |
+| ----------------------- | ---------- | ---------- | ---------- |
+| MegaDescriptor          | 51.0%      | 75.0%      | 45.0%      |
+| MD→XFeat N=10           | 58.0%      | 80.0%      | 58.0%      |
+| **A CalShortlist N=10** | **64.0%**  | 77.0%      | **64.0%**  |
+
 
 Cal shortlist **+6.0 pp** top-1 over naive cascade. No identities excluded.
 
-Results: [`docs/results/amvrakikos_md_xfeat_cal_shortlist_N10.csv`](results/amvrakikos_md_xfeat_cal_shortlist_N10.csv)
+Results: `[docs/results/amvrakikos_md_xfeat_cal_shortlist_N10.csv](results/amvrakikos_md_xfeat_cal_shortlist_N10.csv)`
 
-### ReunionHawksbill (\(n=136\), 34 identities; test \(n=68\))
+### ReunionHawksbill (n=136, 34 identities; test n=68)
 
-| Method | Full top-1 | Full top-5 | Opp. top-1 |
-|---|---:|---:|---:|
-| MegaDescriptor | 60.3% | 89.7% | 60.3% |
-| MD→XFeat N=10 | 75.0% | 91.2% | 75.0% |
-| **A CalShortlist N=10** | **79.4%** | 92.6% | **79.4%** |
+
+| Method                  | Full top-1 | Full top-5 | Opp. top-1 |
+| ----------------------- | ---------- | ---------- | ---------- |
+| MegaDescriptor          | 60.3%      | 89.7%      | 60.3%      |
+| MD→XFeat N=10           | 75.0%      | 91.2%      | 75.0%      |
+| **A CalShortlist N=10** | **79.4%**  | 92.6%      | **79.4%**  |
+
 
 Cal shortlist **+4.4 pp** top-1 over naive cascade. No identities excluded.
 
-Results: [`docs/results/reunion_hawksbill_md_xfeat_cal_shortlist_N10.csv`](results/reunion_hawksbill_md_xfeat_cal_shortlist_N10.csv)
+Results: `[docs/results/reunion_hawksbill_md_xfeat_cal_shortlist_N10.csv](results/reunion_hawksbill_md_xfeat_cal_shortlist_N10.csv)`
 
 Related comparisons (ReunionGreen):
 
 - 512×512 vs no resize: `[docs/results/reunion_md_xfeat_resize_N10.csv](results/reunion_md_xfeat_resize_N10.csv)`
 - XFeat vs LoMa @ sq512: `[docs/results/reunion_md_xfeat_vs_loma_sq512_N10.csv](results/reunion_md_xfeat_vs_loma_sq512_N10.csv)`
+
+
 
 ## How to reproduce
 
@@ -297,6 +383,9 @@ Other scripts:
 | `scripts/compare_md_xfeat_loma_n.py`        | XFeat vs LoMa, default max800    |
 | `scripts/sweep_md_xfeat_n.py`               | Shortlist N sweep                |
 | `scripts/benchmark_smart_rerank.py`         | Cal shortlist + gates for ALIKED |
+| `scripts/plot_isotonic_pchip_curve.py`      | Regenerate calibration curve figure |
+
+
 
 
 ## Related code
@@ -307,8 +396,11 @@ Other scripts:
 - Cascade rerank: `cascade_similarity()` in `[scripts/compare_base_models.py](../scripts/compare_base_models.py)`
 - Upstream calibrator: `wildlife_tools.similarity.calibration.IsotonicCalibration` (isotonic regression + `PchipInterpolator`)
 
+
+
 ## See also
 
+- [Production calibrator refit plan](production-calibrator-refit.md) — scaling to n≈2000, when to refit, drift, deploy gate
 - [Base model comparison](base-model-comparison.md) — ALIKED / LoMa protocols and historical numbers
 - [Base model comparison](base-model-comparison.md#methods) — FusionCalibrated definition
 
