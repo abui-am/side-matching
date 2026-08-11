@@ -4,3 +4,8 @@ scikit-image
 timm
 wildlife-datasets
 wildlife-tools @ git+https://github.com/WildlifeDatasets/wildlife-tools@main
+lomatch @ git+https://github.com/davnords/LoMa.git
+DeDoDe @ git+https://github.com/Parskatt/DeDoDe.git
+einops
+opencv-python
+tyro

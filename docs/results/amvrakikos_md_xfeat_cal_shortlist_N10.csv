@@ -1,0 +1,4 @@
+dataset,method,flip,shortlist_n,resize,split_mode,seed,n_identities,n_excluded_identities,n_images,n_queries,full_top1,full_top5,opp_top1
+Amvrakikos,MegaDescriptor,True,10,sq512,one_per_side,0,50,0,200,100,0.5100000000000002,0.7500000000000004,0.45000000000000023
+Amvrakikos,MD→XFeat N=10,True,10,sq512,one_per_side,0,50,0,200,100,0.5800000000000003,0.8000000000000005,0.5800000000000003
+Amvrakikos,A CalShortlist N=10,True,10,sq512,one_per_side,0,50,0,200,100,0.6400000000000003,0.7700000000000005,0.6400000000000003

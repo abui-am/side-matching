@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Union
+from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union
 
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -22,6 +23,74 @@ def normalize_orientation_codes(orientations: Sequence) -> np.ndarray:
         elif text in {"right", "r", "1"}:
             codes[idx] = 1
     return codes
+
+
+def identities_with_both_sides(
+    df: pd.DataFrame,
+    *,
+    identity_col: str = "identity",
+    orientation_col: str = "orientation",
+) -> Set:
+    """Return identities that have at least one left and one right photo."""
+    codes = normalize_orientation_codes(df[orientation_col].to_numpy())
+    identities = df[identity_col].to_numpy()
+    bilateral: Set = set()
+    for identity in pd.unique(identities):
+        group_codes = codes[identities == identity]
+        if (group_codes == 0).any() and (group_codes == 1).any():
+            bilateral.add(identity)
+    return bilateral
+
+
+def filter_bilateral_df(
+    df: pd.DataFrame,
+    *,
+    identity_col: str = "identity",
+    orientation_col: str = "orientation",
+) -> tuple[pd.DataFrame, np.ndarray]:
+    """Keep rows whose identity has both left and right profile photos.
+
+    Returns the filtered dataframe (reset index) and original row indices kept.
+    """
+    bilateral = identities_with_both_sides(
+        df, identity_col=identity_col, orientation_col=orientation_col
+    )
+    keep_mask = df[identity_col].isin(bilateral).to_numpy()
+    keep_idx = np.flatnonzero(keep_mask)
+    filtered = df.iloc[keep_idx].reset_index(drop=True)
+    return filtered, keep_idx
+
+
+def split_calibration_one_per_side(
+    df: pd.DataFrame,
+    seed: int,
+    *,
+    identity_col: str = "identity",
+    orientation_col: str = "orientation",
+) -> tuple[np.ndarray, np.ndarray]:
+    """Pick one left + one right photo per identity for calibration; rest for test.
+
+    Expects ``df`` to contain only bilateral identities (see ``filter_bilateral_df``).
+    Unknown orientations (e.g. top views) are never selected for calibration.
+    """
+    codes = normalize_orientation_codes(df[orientation_col].to_numpy())
+    identities = df[identity_col].to_numpy()
+    rng = np.random.default_rng(seed)
+    val: list[int] = []
+    for identity in pd.unique(identities):
+        positions = np.flatnonzero(identities == identity)
+        group_codes = codes[positions]
+        left_pool = positions[group_codes == 0]
+        right_pool = positions[group_codes == 1]
+        if left_pool.size == 0 or right_pool.size == 0:
+            raise ValueError(f"Identity {identity!r} lacks left or right photos")
+        val.append(int(rng.choice(left_pool)))
+        val.append(int(rng.choice(right_pool)))
+    val_arr = np.sort(np.asarray(val, dtype=np.int64))
+    test_arr = np.setdiff1d(np.arange(len(df), dtype=np.int64), val_arr)
+    if test_arr.size == 0:
+        raise ValueError("Calibration split left no held-out test queries")
+    return val_arr, test_arr
 
 
 def _as_label_array(labels: Union[torch.Tensor, np.ndarray]) -> np.ndarray:

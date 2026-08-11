@@ -107,5 +107,6 @@ Features from local pickles under `tes/model/features`. Device: Apple MPS for Li
 ## Related code
 
 - Similarity / fusion: `sides_matching/predictions.py` (`MegaDescriptor`, `Aliked`, `Combined`, `Prediction`)
+- MD→XFeat + isotonic+PCHIP cal shortlist: [docs/md-xfeat-calibration.md](md-xfeat-calibration.md)
 - Feature extraction notebook: `notebooks/compute_features.ipynb`
 - Matching notebook: `notebooks/matching.ipynb`

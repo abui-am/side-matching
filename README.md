@@ -33,8 +33,11 @@ The code is divided into the notebooks:
 
 ### Base model comparison
 
-To compare base MegaDescriptor, ALIKED, calibrated fusion, and MD→ALIKED shortlist rerank (protocol + latest numbers):
+To compare base MegaDescriptor, LoMa-B, calibrated fusion, MD→LoMa shortlist rerank, and A CalShortlist (protocol + latest numbers):
 
 - Doc: [docs/base-model-comparison.md](docs/base-model-comparison.md)
-- Script: `scripts/compare_base_models.py`
-- Results CSV: [docs/results/base_model_comparison.csv](docs/results/base_model_comparison.csv)
+- MD→XFeat + calibration: [docs/md-xfeat-calibration.md](docs/md-xfeat-calibration.md)
+- LoMa script: `scripts/compare_loma_models.py`
+- XFeat cal shortlist script: `scripts/compare_md_xfeat_cal_shortlist.py`
+- Legacy ALIKED script: `scripts/compare_base_models.py`
+- Results CSV: [docs/results/base_model_comparison_loma.csv](docs/results/base_model_comparison_loma.csv)

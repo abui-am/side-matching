@@ -1,0 +1,52 @@
+{
+  "rows": [
+    {
+      "dataset": "ReunionHawksbill",
+      "method": "MegaDescriptor",
+      "flip": true,
+      "shortlist_n": 10,
+      "resize": "sq512",
+      "split_mode": "one_per_side",
+      "seed": 0,
+      "n_identities": 34,
+      "n_excluded_identities": 0,
+      "n_images": 136,
+      "n_queries": 68,
+      "full_top1": 0.6029411764705879,
+      "full_top5": 0.8970588235294104,
+      "opp_top1": 0.6029411764705879
+    },
+    {
+      "dataset": "ReunionHawksbill",
+      "method": "MD\u2192XFeat N=10",
+      "flip": true,
+      "shortlist_n": 10,
+      "resize": "sq512",
+      "split_mode": "one_per_side",
+      "seed": 0,
+      "n_identities": 34,
+      "n_excluded_identities": 0,
+      "n_images": 136,
+      "n_queries": 68,
+      "full_top1": 0.7499999999999991,
+      "full_top5": 0.9117647058823515,
+      "opp_top1": 0.7499999999999991
+    },
+    {
+      "dataset": "ReunionHawksbill",
+      "method": "A CalShortlist N=10",
+      "flip": true,
+      "shortlist_n": 10,
+      "resize": "sq512",
+      "split_mode": "one_per_side",
+      "seed": 0,
+      "n_identities": 34,
+      "n_excluded_identities": 0,
+      "n_images": 136,
+      "n_queries": 68,
+      "full_top1": 0.7941176470588225,
+      "full_top5": 0.9264705882352926,
+      "opp_top1": 0.7941176470588225
+    }
+  ]
+}

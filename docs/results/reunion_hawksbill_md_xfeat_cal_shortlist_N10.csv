@@ -1,0 +1,4 @@
+dataset,method,flip,shortlist_n,resize,split_mode,seed,n_identities,n_excluded_identities,n_images,n_queries,full_top1,full_top5,opp_top1
+ReunionHawksbill,MegaDescriptor,True,10,sq512,one_per_side,0,34,0,136,68,0.6029411764705879,0.8970588235294104,0.6029411764705879
+ReunionHawksbill,MD→XFeat N=10,True,10,sq512,one_per_side,0,34,0,136,68,0.7499999999999991,0.9117647058823515,0.7499999999999991
+ReunionHawksbill,A CalShortlist N=10,True,10,sq512,one_per_side,0,34,0,136,68,0.7941176470588225,0.9264705882352926,0.7941176470588225
