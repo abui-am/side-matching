@@ -22,6 +22,11 @@ images/
 *.TIFF
 *.WEBP
 
+# Documentation figures that are intentionally versioned
+!docs/figures/
+!docs/figures/best-method/
+!docs/figures/best-method/*.jpg
+
 # Tex
 *.synctex.gz
 
