@@ -1,0 +1,13 @@
+dataset,method,flip,shortlist_n,shortlist_fraction,resize,yolo_kepala,bbox_crop,split_mode,seed,max_identities,n_identities,n_excluded_identities,n_images,n_queries,full_top1,full_top5,opp_top1
+Amvrakikos,MegaDescriptor,True,80,0.4,bbox_sq512,False,True,one_per_side,0,,50,0,200,100,0.5100000000000002,0.7500000000000004,0.45000000000000023
+Amvrakikos,MD→XFeat N=80,True,80,0.4,bbox_sq512,False,True,one_per_side,0,,50,0,200,100,0.6100000000000003,0.7900000000000005,0.6000000000000003
+Amvrakikos,A CalShortlist N=80,True,80,0.4,bbox_sq512,False,True,one_per_side,0,,50,0,200,100,0.6600000000000004,0.8500000000000005,0.6600000000000004
+ReunionGreen,MegaDescriptor,True,80,0.4,bbox_sq512,False,True,one_per_side,0,,50,0,200,100,0.5700000000000003,0.8000000000000005,0.5400000000000003
+ReunionGreen,MD→XFeat N=80,True,80,0.4,bbox_sq512,False,True,one_per_side,0,,50,0,200,100,0.6700000000000004,0.8600000000000005,0.6700000000000004
+ReunionGreen,A CalShortlist N=80,True,80,0.4,bbox_sq512,False,True,one_per_side,0,,50,0,200,100,0.7400000000000004,0.9200000000000006,0.7300000000000004
+ReunionHawksbill,MegaDescriptor,True,54,0.4,bbox_sq512,False,True,one_per_side,0,,34,0,136,68,0.6029411764705879,0.8970588235294104,0.6029411764705879
+ReunionHawksbill,MD→XFeat N=54,True,54,0.4,bbox_sq512,False,True,one_per_side,0,,34,0,136,68,0.7647058823529402,0.9264705882352926,0.7647058823529402
+ReunionHawksbill,A CalShortlist N=54,True,54,0.4,bbox_sq512,False,True,one_per_side,0,,34,0,136,68,0.8382352941176459,0.9411764705882337,0.8382352941176459
+Zakynthos,MegaDescriptor,True,64,0.4,bbox_sq512,False,True,one_per_side,0,,40,0,160,80,0.7124999999999995,0.9749999999999985,0.575
+Zakynthos,MD→XFeat N=64,True,64,0.4,bbox_sq512,False,True,one_per_side,0,,40,0,160,80,0.47500000000000026,0.7249999999999994,0.47500000000000026
+Zakynthos,A CalShortlist N=64,True,64,0.4,bbox_sq512,False,True,one_per_side,0,,40,0,160,80,0.7374999999999994,0.9624999999999986,0.6499999999999997

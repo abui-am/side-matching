@@ -61,6 +61,10 @@ def test_xfeat_resize_tag():
 
 def test_xfeat_cache_tag_kepala():
     assert xfeat_cache_tag(max_size=None, square_size=512, use_kepala=False) == "sq512"
+    assert (
+        xfeat_cache_tag(max_size=None, square_size=512, use_kepala=False, use_bbox=True)
+        == "bbox_sq512"
+    )
     assert xfeat_cache_tag(max_size=None, square_size=512, use_kepala=True) == "kepala_sq512"
     assert (
         xfeat_cache_tag(
@@ -68,8 +72,9 @@ def test_xfeat_cache_tag_kepala():
             square_size=512,
             use_kepala=True,
             min_area_fraction=0.10,
+            pad_fraction=0.50,
         )
-        == "kepala_min10_sq512"
+        == "kepala_pad50_min100_sq512"
     )
 
 

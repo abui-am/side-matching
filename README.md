@@ -33,6 +33,8 @@ The code is divided into the notebooks:
 
 ### Base model comparison
 
+**Current best method** (A CalShortlist, N=40% of gallery, dataset bbox crop, no YOLO): [docs/best-method.md](docs/best-method.md)
+
 To compare base MegaDescriptor, LoMa-B, calibrated fusion, MD→LoMa shortlist rerank, and A CalShortlist (protocol + latest numbers):
 
 - Doc: [docs/base-model-comparison.md](docs/base-model-comparison.md)

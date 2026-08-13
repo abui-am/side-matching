@@ -1,0 +1,61 @@
+{
+  "rows": [
+    {
+      "dataset": "Zakynthos",
+      "method": "MegaDescriptor",
+      "flip": true,
+      "shortlist_n": 64,
+      "shortlist_fraction": 0.4,
+      "resize": "kepala_min10_sq512",
+      "yolo_kepala": true,
+      "split_mode": "one_per_side",
+      "seed": 0,
+      "max_identities": null,
+      "n_identities": 40,
+      "n_excluded_identities": 0,
+      "n_images": 160,
+      "n_queries": 80,
+      "full_top1": 0.26250000000000007,
+      "full_top5": 0.45000000000000023,
+      "opp_top1": 0.23750000000000007
+    },
+    {
+      "dataset": "Zakynthos",
+      "method": "MD\u2192XFeat N=64",
+      "flip": true,
+      "shortlist_n": 64,
+      "shortlist_fraction": 0.4,
+      "resize": "kepala_min10_sq512",
+      "yolo_kepala": true,
+      "split_mode": "one_per_side",
+      "seed": 0,
+      "max_identities": null,
+      "n_identities": 40,
+      "n_excluded_identities": 0,
+      "n_images": 160,
+      "n_queries": 80,
+      "full_top1": 0.17500000000000002,
+      "full_top5": 0.4375000000000002,
+      "opp_top1": 0.17500000000000002
+    },
+    {
+      "dataset": "Zakynthos",
+      "method": "A CalShortlist N=64",
+      "flip": true,
+      "shortlist_n": 64,
+      "shortlist_fraction": 0.4,
+      "resize": "kepala_min10_sq512",
+      "yolo_kepala": true,
+      "split_mode": "one_per_side",
+      "seed": 0,
+      "max_identities": null,
+      "n_identities": 40,
+      "n_excluded_identities": 0,
+      "n_images": 160,
+      "n_queries": 80,
+      "full_top1": 0.22500000000000006,
+      "full_top5": 0.5375000000000001,
+      "opp_top1": 0.21250000000000005
+    }
+  ]
+}

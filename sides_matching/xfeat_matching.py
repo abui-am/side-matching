@@ -68,17 +68,18 @@ def load_xfeat_image(
     max_size: int | None = 800,
     square_size: int | None = None,
     cropper: KepalaCropper | None = None,
+    bbox=None,
 ) -> torch.Tensor:
     """Load RGB image as (1, 3, H, W) float in [0, 1].
 
-    Preprocessing order: open → flip (optional) → YOLO kepala crop (optional) → resize.
+    Preprocessing order: open → dataset bbox (optional) → flip → YOLO crop → resize.
 
     Resize modes (first match wins):
     - square_size: force (square_size, square_size)
     - max_size: preserve aspect, max side = max_size
     - both None: no resize (native resolution)
     """
-    pil_im = load_rgb_pil(path, flip=flip, cropper=cropper)
+    pil_im = load_rgb_pil(path, flip=flip, cropper=cropper, bbox=bbox)
     if square_size is not None:
         pil_im = pil_im.resize((square_size, square_size))
     elif max_size is not None:
@@ -103,9 +104,17 @@ def xfeat_cache_tag(
     square_size: int | None,
     use_kepala: bool,
     min_area_fraction: float = 0.0,
+    pad_fraction: float = 0.0,
+    use_bbox: bool = False,
 ) -> str:
     resize = xfeat_resize_tag(max_size=max_size, square_size=square_size)
-    pre = preprocess_tag(use_kepala=use_kepala, min_area_fraction=min_area_fraction)
+    pre = preprocess_tag(
+        use_kepala=use_kepala,
+        min_area_fraction=min_area_fraction,
+        pad_fraction=pad_fraction,
+    )
+    if use_bbox:
+        resize = f"bbox_{resize}"
     if pre == "full":
         return resize
     return f"{pre}_{resize}"
@@ -123,6 +132,7 @@ class XFeatMatcher:
         square_size: int | None = None,
         min_cossim: float = 0.82,
         cropper: KepalaCropper | None = None,
+        use_bbox: bool = False,
     ) -> None:
         self.device = torch.device(device)
         self.top_k = top_k
@@ -130,21 +140,27 @@ class XFeatMatcher:
         self.square_size = square_size
         self.min_cossim = min_cossim
         self.cropper = cropper
+        self.use_bbox = use_bbox
         self.use_kepala = cropper is not None
         self.min_area_fraction = (
             cropper.min_area_fraction if cropper is not None else 0.0
         )
+        self.pad_fraction = cropper.pad_fraction if cropper is not None else 0.0
         self.resize_tag = xfeat_cache_tag(
             max_size=max_size,
             square_size=square_size,
             use_kepala=self.use_kepala,
             min_area_fraction=self.min_area_fraction,
+            pad_fraction=self.pad_fraction,
+            use_bbox=use_bbox,
         )
         model = XFeat(top_k=top_k)
         load_xfeat_weights(model)
         self.model = model.to(self.device).eval()
 
-    def extract_features(self, path: Path, *, flip: bool = False) -> XFeatImageFeatures:
+    def extract_features(
+        self, path: Path, *, flip: bool = False, bbox=None
+    ) -> XFeatImageFeatures:
         image = load_xfeat_image(
             path,
             flip=flip,
@@ -152,6 +168,7 @@ class XFeatMatcher:
             max_size=self.max_size,
             square_size=self.square_size,
             cropper=self.cropper,
+            bbox=bbox,
         )
         with torch.inference_mode():
             out = self.model.detectAndCompute(image, top_k=self.top_k)[0]
@@ -233,6 +250,7 @@ def load_or_build_feature_cache(
     flip: bool,
     cache_dir: Path,
     matcher: XFeatMatcher,
+    bboxes: Sequence | None = None,
 ) -> list[XFeatImageFeatures]:
     cache_dir.mkdir(parents=True, exist_ok=True)
     cache = _feature_cache_path(cache_dir, name, flip, resize_tag=matcher.resize_tag)
@@ -240,9 +258,17 @@ def load_or_build_feature_cache(
         payloads = torch.load(cache, weights_only=False)
         return [XFeatImageFeatures.from_cpu_dict(item) for item in payloads]
 
+    if bboxes is None:
+        bboxes = [None] * len(paths)
+    if len(bboxes) != len(paths):
+        raise ValueError("bboxes length must match paths")
     features: list[XFeatImageFeatures] = []
-    for path in tqdm(paths, desc=f"XFeat features {matcher.resize_tag} flip={flip}"):
-        features.append(matcher.extract_features(path, flip=flip))
+    for path, bbox in tqdm(
+        zip(paths, bboxes, strict=True),
+        total=len(paths),
+        desc=f"XFeat features {matcher.resize_tag} flip={flip}",
+    ):
+        features.append(matcher.extract_features(path, flip=flip, bbox=bbox))
     torch.save([feat.to_cpu_dict() for feat in features], cache)
     return features
 
@@ -257,6 +283,7 @@ def load_or_compute_xfeat_shortlist_similarity(
     top_n: int,
     cache_dir: Path,
     matcher: XFeatMatcher | None = None,
+    bboxes: Sequence | None = None,
 ) -> np.ndarray:
     """Match XFeat only on MD top-N candidates; query flip only, gallery unflipped."""
     matcher = matcher or XFeatMatcher(device="cpu")
@@ -264,6 +291,7 @@ def load_or_compute_xfeat_shortlist_similarity(
     md_preprocess = preprocess_tag(
         use_kepala=matcher.use_kepala,
         min_area_fraction=matcher.min_area_fraction,
+        pad_fraction=matcher.pad_fraction,
     )
     sim_cache = _shortlist_similarity_cache_path(
         cache_dir,
@@ -287,6 +315,7 @@ def load_or_compute_xfeat_shortlist_similarity(
         flip=flip_query,
         cache_dir=cache_dir,
         matcher=matcher,
+        bboxes=bboxes,
     )
     db_feats = load_or_build_feature_cache(
         name=name,
@@ -294,6 +323,7 @@ def load_or_compute_xfeat_shortlist_similarity(
         flip=False,
         cache_dir=cache_dir,
         matcher=matcher,
+        bboxes=bboxes,
     )
     sim = matcher.compute_shortlist_similarity(query_feats, db_feats, shortlists)
     np.save(sim_cache, sim)

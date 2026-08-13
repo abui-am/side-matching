@@ -42,10 +42,29 @@ class _FakeBoxes:
 def test_preprocess_tag():
     assert preprocess_tag(use_kepala=False) == "full"
     assert preprocess_tag(use_kepala=True) == "kepala"
-    assert preprocess_tag(use_kepala=True, min_area_fraction=0.10) == "kepala_min10"
+    assert (
+        preprocess_tag(use_kepala=True, min_area_fraction=0.10, pad_fraction=0.50)
+        == "kepala_pad50_min100"
+    )
+    assert (
+        preprocess_tag(use_kepala=True, min_area_fraction=0.005, pad_fraction=0.50)
+        == "kepala_pad50_min005"
+    )
+
+
+def test_apply_bbox_xywh():
+    from sides_matching.yolo_kepala_preprocessing import apply_bbox_xywh, parse_bbox_xywh
+
+    im = Image.new("RGB", (100, 80), color=(9, 9, 9))
+    cropped = apply_bbox_xywh(im, [10, 20, 30, 25])
+    assert cropped.size == (30, 25)
+    assert parse_bbox_xywh(None) is None
+    assert apply_bbox_xywh(im, None).size == im.size
 
 
 def test_box_area_fraction():
+    assert box_area_fraction(0, 0, 50, 50, 100, 100) == 0.25
+    assert box_area_fraction(0, 0, 10, 10, 100, 100) == 0.01
     assert box_area_fraction(0, 0, 50, 50, 100, 100) == 0.25
     assert box_area_fraction(0, 0, 10, 10, 100, 100) == 0.01
 
@@ -57,7 +76,7 @@ def test_select_best_box_xyxy():
             _FakeBox(conf=0.9, xyxy=[1, 2, 3, 4]),
         ]
     )
-    assert select_best_box_xyxy(boxes) == (1.0, 2.0, 3.0, 4.0)
+    assert select_best_box_xyxy(boxes) == ((1.0, 2.0, 3.0, 4.0), 0.9)
     assert select_best_box_xyxy(_FakeBoxes([])) is None
 
 
@@ -80,7 +99,7 @@ def test_apply_kepala_crop_no_cropper():
 
 def test_kepala_cropper_crops_to_detection():
     im = Image.new("RGB", (100, 80), color=(255, 0, 0))
-    cropper = KepalaCropper(weights=MagicMock(), conf=0.05)
+    cropper = KepalaCropper(weights=MagicMock(), conf=0.05, pad_fraction=0.05)
 
     fake_boxes = _FakeBoxes([_FakeBox(conf=0.8, xyxy=[20, 10, 60, 50])])
     fake_result = MagicMock()
@@ -124,3 +143,18 @@ def test_kepala_cropper_fallback_full_image_when_no_detection():
         out = cropper.crop(im)
 
     assert out.size == im.size
+
+
+def test_draw_crop_overlay_keeps_size():
+    from sides_matching.yolo_kepala_preprocessing import CropDecision, draw_crop_overlay
+
+    im = Image.new("RGB", (80, 60), color=(10, 10, 10))
+    decision = CropDecision(
+        "cropped",
+        box_xyxy=(10.0, 10.0, 50.0, 40.0),
+        crop_xyxy=(8, 8, 52, 42),
+        conf=0.4,
+        area_fraction=0.25,
+    )
+    overlay = draw_crop_overlay(im, decision)
+    assert overlay.size == im.size

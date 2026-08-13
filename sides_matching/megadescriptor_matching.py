@@ -62,6 +62,7 @@ class MegaDescriptorExtractor:
         self.preprocess = preprocess_tag(
             use_kepala=cropper is not None,
             min_area_fraction=cropper.min_area_fraction if cropper else 0.0,
+            pad_fraction=cropper.pad_fraction if cropper else 0.0,
         )
         self.transform = get_transform(
             flip=False,

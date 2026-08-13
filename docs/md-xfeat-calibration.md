@@ -1,5 +1,7 @@
 # MD→XFeat and calibrated shortlist fusion
 
+**Current recommended recipe, settings, and numbers:** [best-method.md](best-method.md).
+
 How **MegaDescriptor → XFeat** shortlist reranking works, what **isotonic + PCHIP** calibration means, and how **A CalShortlist** differs from a naive cascade.
 
 Script: `[scripts/compare_md_xfeat_cal_shortlist.py](../scripts/compare_md_xfeat_cal_shortlist.py)`  
@@ -201,14 +203,40 @@ Only gallery index j in query i's MD top-N get finite XFeat scores; the rest sta
 
 ### Calibration / test split (`one_per_side`)
 
-MD→XFeat cal shortlist benchmarks use a **bilateral per-identity split** (not a random 50% of photos):
+MegaDescriptor and XFeat stay frozen. The only learned piece is the **isotonic + PCHIP calibrator**, so “training data” here means **calibration queries**.
 
-1. **Exclude** identities that lack both a left and a right profile photo.
-2. **Calibration queries**: per remaining identity, pick **one left + one right** photo (`seed=0`).
-3. **Test queries**: all other photos of those identities (including unknown-orientation views such as Amvrakikos top shots — test only, never calibration).
-4. Fit isotonic calibrators on calibration query rows; report accuracy on test queries only (same test set for MD, naive XFeat, and cal shortlist).
+MD→XFeat cal shortlist benchmarks use a **bilateral per-identity split** (`one_per_side`, `seed=0`) — not a random 50% of photos.
 
-Implementation: `[filter_bilateral_df](sides_matching/evaluation.py)`, `[split_calibration_one_per_side](sides_matching/evaluation.py)` in `sides_matching/evaluation.py`.
+**1. Filter identities first**
+
+Drop any identity that does not have **both** a left and a right photo (`filter_bilateral_df`). Unknown orientations (e.g. Amvrakikos top shots) do not count as left/right.
+
+**2. Pick calibration vs test queries**
+
+For every remaining identity (`split_calibration_one_per_side`):
+
+- **Calibration (train):** 1 left + 1 right photo, chosen with `numpy.random.default_rng(0)`
+- **Test:** every other photo of that identity
+
+Unknown-orientation photos are never chosen for calibration; they only appear in test.
+
+On ReunionGreen that is 50 identities × 2 photos = **100 calibration queries**, and the other **100** photos are test queries. ReunionHawksbill: 34 × 2 = 68 cal / 68 test. Amvrakikos: 50 × 2 = 100 cal / 100 test.
+
+**3. What each split is used for**
+
+
+| Stage                   | Calibration photos  | Test photos          |
+| ----------------------- | ------------------- | -------------------- |
+| MD / XFeat features     | All kept photos     | All kept photos      |
+| Isotonic calibrator fit | Cal query rows only | No                   |
+| Accuracy reporting      | No                  | Test query rows only |
+
+
+Gallery for a test query still includes **all** kept photos, including that turtle’s calibration photos. Test queries themselves never go into the calibrator fit. MD, naive XFeat, and A CalShortlist share this same test set.
+
+**Different split for full FusionCalibrated.** The full-gallery FusionCalibrated method uses a random held-out half (`val_fraction=0.5`, `seed=0`), not `one_per_side`.
+
+Implementation: `[filter_bilateral_df](../sides_matching/evaluation.py)`, `[split_calibration_one_per_side](../sides_matching/evaluation.py)` in `sides_matching/evaluation.py`.
 
 ### Naive cascade (lexsort)
 
@@ -285,18 +313,83 @@ Cal shortlist adds **no extra XFeat matches** vs naive cascade; overhead is O(n^
 ## Settings (benchmark)
 
 
-| Parameter         | Value                                                     |
-| ----------------- | --------------------------------------------------------- |
-| Query flip        | `True` (opposite-side protocol)                           |
-| Shortlist \(N\) | 10 (default); or `--shortlist-fraction 0.3` / `0.4` → \(N = \mathrm{round}(f \times n)\) |
-| XFeat resize      | 512×512 square (`sq512`)                                  |
-| XFeat preprocessing | Full frame (default); optional `--yolo-kepala` head crop (see below) |
-| Calibration split | `one_per_side` — 1 left + 1 right per identity (`seed=0`) |
-| MD features       | Precomputed MegaDescriptor pickles (full frame)           |
+| Parameter           | Value                                                                                                                  |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Query flip          | `True` (opposite-side protocol)                                                                                        |
+| Shortlist N         | 10 (default); or `--shortlist-fraction 0.3` / `0.4` → N = \mathrm{round}(f \times n)                                   |
+| XFeat resize        | 512×512 square (`sq512`)                                                                                               |
+| XFeat preprocessing | Full frame (default); `--bbox-crop` uses dataset head boxes; optional `--yolo-kepala`                                  |
+| Calibration split   | `one_per_side` — 1 left + 1 right per identity (`seed=0`)                                                              |
+| MD features         | Precomputed MegaDescriptor pickles (Wildlife `img_load='auto'`: **bbox** on Zakynthos/Amvrakikos, **full** on Reunion) |
+
+
+
+
+### Dataset bbox crop (`--bbox-crop`)
+
+No YOLO. Crop XFeat (and match MD) to the **hand-drawn head box** already in the dataset.
+
+
+| Dataset                  | Source                                   | Wildlife `img_load` | Typical box vs raw photo               |
+| ------------------------ | ---------------------------------------- | ------------------- | -------------------------------------- |
+| Zakynthos                | `data/ZakynthosTurtles/bbox.csv`         | `bbox`              | ~1–12% of a 5472×3648 dive photo       |
+| Amvrakikos               | `data/AmvrakikosTurtles/annotations.csv` | `bbox`              | ~20–35% of a boat photo                |
+| ReunionGreen / Hawksbill | none                                     | `full`              | Image is already an ~800×600 head shot |
+
+
+Load order: **open → bbox crop (if present) → flip (query) → resize 512×512**. Same box MD used when the pickles were extracted.
+
+#### How the score is computed (unchanged)
+
+Per query i, gallery j \neq i:
+
+1. **MD cosine** s^{\mathrm{MD}}_{ij} from pickle embeddings (already bbox-cropped on Zakynthos/Amvrakikos).
+2. Keep **top-N** gallery IDs by s^{\mathrm{MD}} (N = \mathrm{round}(0.4 n) here).
+3. **XFeat match count** s^{\mathrm{XF}}_{ij} = number of mutual nearest-neighbour matches on the **cropped** 512×512 pair.
+4. Fit **isotonic + PCHIP** on calibration queries: map each raw score to estimated P(\text{same identity} \mid \text{score}).
+5. On the shortlist, **A CalShortlist** ranks by
+
+   f_{ij} = \tfrac{1}{2}\bigl( \hat{p}^{\mathrm{MD}}(s^{\mathrm{MD}}*{ij}) + \hat{p}^{\mathrm{XF}}(s^{\mathrm{XF}}*{ij}) \bigr)
+   
+   with raw MD as tie-break. Naive cascade ranks by raw s^{\mathrm{XF}} only.
+
+Top-1 is the fraction of **test** queries whose highest-ranked gallery image (excluding self) has the same identity.
+
+#### Why bbox crop raises the number (Zakynthos)
+
+MD was never looking at the full ocean: Wildlife already cropped to `bbox` before embedding. XFeat was not — it resized the **whole** 5472×3648 frame to 512×512, so the head was a handful of pixels and most keypoints landed on sand/water. Match counts were noise. Naive cascade then **overwrote** a good MD ranking with that noise (25.0% top-1 vs MD 71.2%). Cal shortlist could only hold MD (71.2%) because calibrated XFeat had almost no signal.
+
+With `--bbox-crop`, XFeat sees the same head crop MD saw, then square-resizes that crop. Keypoints land on scales; match counts track identity. Naive XFeat jumps **25.0% → 47.5%**. Calibrated XFeat is now worth averaging with MD, so CalShortlist **71.2% → 73.7%** (opp. 62.5% → 65.0%).
+
+Reunion does not move: there is no bbox column, and the files are already head photos.
+
+Results: [N=40% bbox XFeat](results/md_xfeat_cal_shortlist_N40pct_bbox.csv)
+
+
+| Dataset               | MD    | Naive XFeat (full) | Naive XFeat (bbox) | Cal (full XFeat) | **Cal (bbox XFeat)** |
+| --------------------- | ----- | ------------------ | ------------------ | ---------------- | -------------------- |
+| Zakynthos N=64        | 71.2% | 25.0%              | **47.5%**          | 71.2%            | **73.7%**            |
+| Amvrakikos N=80       | 51.0% | 57.0%              | 61.0%              | **70.0%**        | 66.0%                |
+| ReunionGreen N=80     | 57.0% | 67.0%              | 67.0%              | 74.0%            | 74.0%                |
+| ReunionHawksbill N=54 | 60.3% | 76.5%              | 76.5%              | 83.8%            | 83.8%                |
+
+
+Amvrakikos naive improves (+4 pp) but cal is slightly down vs full-frame XFeat (70% → 66%): the GT box is a large head crop, and full-frame XFeat already had enough scale texture; bbox square-resize can drop context. Zakynthos is the dataset where full-frame XFeat was actually broken.
+
+```bash
+.venv/bin/python scripts/compare_md_xfeat_cal_shortlist.py \
+  --datasets Amvrakikos ReunionGreen ReunionHawksbill Zakynthos \
+  --shortlist-fraction 0.4 \
+  --bbox-crop \
+  --cache-dir /tmp/xfeat_bbox_compare \
+  --out docs/results/md_xfeat_cal_shortlist_N40pct_bbox.csv
+```
+
+
 
 ### YOLO kepala (head) crop
 
-Optional preprocessing for **both MegaDescriptor and XFeat**: detect the turtle head with the Ultralytics model in [`yolo_kepala/`](../yolo_kepala/) (class `kepala`, weights default `kepala.pt`), crop with 5% padding, then run each model's resize. Order: **open → flip (query) → YOLO crop → resize**.
+Optional preprocessing for **both MegaDescriptor and XFeat**: detect the turtle head with the Ultralytics model in `[yolo_kepala/](../yolo_kepala/)` (class `kepala`, weights default `kepala.pt`), crop with 5% padding, then run each model's resize. Order: **open → flip (query) → YOLO crop → resize**.
 
 - **MD:** 384×384 + ImageNet normalize (recomputed and cached when `--yolo-kepala`; precomputed full-frame pickles used otherwise)
 - **XFeat:** 512×512 square
@@ -313,12 +406,7 @@ Optional preprocessing for **both MegaDescriptor and XFeat**: detect the turtle 
 
 Cache keys include `kepala_` prefix (e.g. `kepala_sq512` for XFeat, `md_kepala_*` for MD) so cropped runs do not collide with full-frame caches.
 
-**Note:** Defaults `--yolo-conf 0.25` and `--yolo-min-area 0.10` skip weak or tiny boxes (crop only if detection confidence ≥ 0.25 **and** box area ≥ 10% of image); otherwise the full frame is used.
-
-
-
-
-
+**Note:** Defaults `--yolo-conf 0.25`, `--yolo-pad 0.50`, `--yolo-min-area 0.005`. Pad expands a tight scale-patch detection toward a full head. Min-area is low because Zakynthos GT heads are often ~1–2% of the raw photo; a 10% gate was rejecting those crops.
 
 ## Results (2026-08-11)
 
@@ -364,42 +452,69 @@ Results: `[docs/results/amvrakikos_md_xfeat_cal_shortlist_N10.csv](results/amvra
 
 Cal shortlist **+4.4 pp** top-1 over naive cascade. No identities excluded.
 
-Results: [`docs/results/reunion_hawksbill_md_xfeat_cal_shortlist_N10.csv`](results/reunion_hawksbill_md_xfeat_cal_shortlist_N10.csv)
+Results: `[docs/results/reunion_hawksbill_md_xfeat_cal_shortlist_N10.csv](results/reunion_hawksbill_md_xfeat_cal_shortlist_N10.csv)`
 
 ### Shortlist size sweep: N=10 vs 30% vs 40% of gallery
 
-Same bilateral split and test queries. \(N = \mathrm{round}(f \times n)\):
+Same bilateral split and test queries. N = \mathrm{round}(f \times n):
 
-| Dataset | n | N @ 30% | N @ 40% |
-|---|---:|---:|---:|
-| ReunionGreen | 200 | 60 | 80 |
-| ReunionHawksbill | 136 | 41 | 54 |
-| Amvrakikos | 200 | 60 | 80 |
 
-| Dataset | N | Method | Full top-1 | Full top-5 | Opp. top-1 | Cal − naive |
-|---|---:|---|---:|---:|---:|---:|
-| ReunionGreen | 10 | MD→XFeat | 65.0% | 81.0% | 65.0% | — |
-| ReunionGreen | 10 | **Cal shortlist** | **71.0%** | 82.0% | **71.0%** | +6.0 pp |
-| ReunionGreen | 60 | MD→XFeat | 66.0% | 85.0% | 66.0% | — |
-| ReunionGreen | 60 | **Cal shortlist** | **75.0%** | 89.0% | **74.0%** | +9.0 pp |
-| ReunionGreen | 80 | MD→XFeat | 67.0% | 86.0% | 67.0% | — |
-| ReunionGreen | 80 | **Cal shortlist** | **74.0%** | 92.0% | **73.0%** | +7.0 pp |
-| ReunionHawksbill | 10 | MD→XFeat | 75.0% | 91.2% | 75.0% | — |
-| ReunionHawksbill | 10 | **Cal shortlist** | **79.4%** | 92.6% | **79.4%** | +4.4 pp |
-| ReunionHawksbill | 41 | MD→XFeat | 73.5% | 91.2% | 73.5% | — |
-| ReunionHawksbill | 41 | **Cal shortlist** | **80.9%** | 91.2% | **80.9%** | +7.4 pp |
-| ReunionHawksbill | 54 | MD→XFeat | 76.5% | 92.6% | 76.5% | — |
-| ReunionHawksbill | 54 | **Cal shortlist** | **83.8%** | 94.1% | **83.8%** | +7.4 pp |
-| Amvrakikos | 10 | MD→XFeat | 58.0% | 80.0% | 58.0% | — |
-| Amvrakikos | 10 | **Cal shortlist** | **64.0%** | 77.0% | **64.0%** | +6.0 pp |
-| Amvrakikos | 60 | MD→XFeat | 57.0% | 73.0% | 57.0% | — |
-| Amvrakikos | 60 | **Cal shortlist** | **68.0%** | 80.0% | **68.0%** | +11.0 pp |
-| Amvrakikos | 80 | MD→XFeat | 57.0% | 74.0% | 57.0% | — |
-| Amvrakikos | 80 | **Cal shortlist** | **70.0%** | 79.0% | **70.0%** | +13.0 pp |
+| Dataset          | n   | N @ 30% | N @ 40% |
+| ---------------- | --- | ------- | ------- |
+| ReunionGreen     | 200 | 60      | 80      |
+| ReunionHawksbill | 136 | 41      | 54      |
+| Amvrakikos       | 200 | 60      | 80      |
+| Zakynthos        | 160 | 48      | 64      |
+
+
+
+| Dataset          | N   | Method            | Full top-1 | Full top-5 | Opp. top-1 | Cal − naive |
+| ---------------- | --- | ----------------- | ---------- | ---------- | ---------- | ----------- |
+| ReunionGreen     | 10  | MD→XFeat          | 65.0%      | 81.0%      | 65.0%      | —           |
+| ReunionGreen     | 10  | **Cal shortlist** | **71.0%**  | 82.0%      | **71.0%**  | +6.0 pp     |
+| ReunionGreen     | 60  | MD→XFeat          | 66.0%      | 85.0%      | 66.0%      | —           |
+| ReunionGreen     | 60  | **Cal shortlist** | **75.0%**  | 89.0%      | **74.0%**  | +9.0 pp     |
+| ReunionGreen     | 80  | MD→XFeat          | 67.0%      | 86.0%      | 67.0%      | —           |
+| ReunionGreen     | 80  | **Cal shortlist** | **74.0%**  | 92.0%      | **73.0%**  | +7.0 pp     |
+| ReunionHawksbill | 10  | MD→XFeat          | 75.0%      | 91.2%      | 75.0%      | —           |
+| ReunionHawksbill | 10  | **Cal shortlist** | **79.4%**  | 92.6%      | **79.4%**  | +4.4 pp     |
+| ReunionHawksbill | 41  | MD→XFeat          | 73.5%      | 91.2%      | 73.5%      | —           |
+| ReunionHawksbill | 41  | **Cal shortlist** | **80.9%**  | 91.2%      | **80.9%**  | +7.4 pp     |
+| ReunionHawksbill | 54  | MD→XFeat          | 76.5%      | 92.6%      | 76.5%      | —           |
+| ReunionHawksbill | 54  | **Cal shortlist** | **83.8%**  | 94.1%      | **83.8%**  | +7.4 pp     |
+| Amvrakikos       | 10  | MD→XFeat          | 58.0%      | 80.0%      | 58.0%      | —           |
+| Amvrakikos       | 10  | **Cal shortlist** | **64.0%**  | 77.0%      | **64.0%**  | +6.0 pp     |
+| Amvrakikos       | 60  | MD→XFeat          | 57.0%      | 73.0%      | 57.0%      | —           |
+| Amvrakikos       | 60  | **Cal shortlist** | **68.0%**  | 80.0%      | **68.0%**  | +11.0 pp    |
+| Amvrakikos       | 80  | MD→XFeat          | 57.0%      | 74.0%      | 57.0%      | —           |
+| Amvrakikos       | 80  | **Cal shortlist** | **70.0%**  | 79.0%      | **70.0%**  | +13.0 pp    |
+
 
 **Takeaways:** Cal shortlist top-1 peaks differ by dataset — ReunionGreen best at **N=60 (75.0%)**, ReunionHawksbill at **N=54 (83.8%)**, Amvrakikos at **N=80 (70.0%)**. Larger N always increases cal-vs-naive gap (+7–13 pp at 30–40%). Naive XFeat can plateau or drop with very wide shortlists (Amvrakikos naive flat at 57–58% for N≥60); calibration still extracts value. ReunionHawksbill benefits monotonically from larger N for both naive and cal.
 
-Results: [N=30%](results/md_xfeat_cal_shortlist_N30pct.csv) · [N=40%](results/md_xfeat_cal_shortlist_N40pct.csv)
+Results: [N=30%](results/md_xfeat_cal_shortlist_N30pct.csv) · [N=40%](results/md_xfeat_cal_shortlist_N40pct.csv) · Zakynthos N=40% [no crop](results/zakynthos_md_xfeat_cal_shortlist_N40pct_full.csv) · [kepala min10](results/zakynthos_md_xfeat_cal_shortlist_N40pct_kepala_min10.csv)
+
+### Zakynthos (n=160, 40 identities; test n=80; N=64 = 40%)
+
+Bilateral split, same protocol. Naive XFeat cascade **hurts** this dataset (as in earlier MD→XFeat N=50 numbers); cal shortlist holds MegaDescriptor top-1 and lifts opposite-side slightly.
+
+
+| Method                  | Full top-1 | Full top-5 | Opp. top-1 |
+| ----------------------- | ---------- | ---------- | ---------- |
+| MegaDescriptor          | 71.2%      | 97.5%      | 57.5%      |
+| MD→XFeat N=64           | 25.0%      | 60.0%      | 25.0%      |
+| **A CalShortlist N=64** | **71.2%**  | **97.5%**  | **62.5%**  |
+
+
+Kepala crop (conf=0.25, min-area=0.10) on MD + XFeat **collapses** all methods:
+
+
+| Method              | Full top-1 | Full top-5 | Opp. top-1 |
+| ------------------- | ---------- | ---------- | ---------- |
+| MegaDescriptor      | 26.3%      | 45.0%      | 23.8%      |
+| MD→XFeat N=64       | 17.5%      | 43.8%      | 17.5%      |
+| A CalShortlist N=64 | 22.5%      | 53.8%      | 21.3%      |
+
 
 Related comparisons (ReunionGreen):
 
@@ -450,6 +565,32 @@ Related comparisons (ReunionGreen):
   --square-size 512 \
   --cache-dir /tmp/xfeat_resize_compare \
   --out docs/results/md_xfeat_cal_shortlist_N40pct.csv
+
+# All datasets, N = 40%, XFeat cropped to dataset bbox (no YOLO)
+.venv/bin/python scripts/compare_md_xfeat_cal_shortlist.py \
+  --datasets Amvrakikos ReunionGreen ReunionHawksbill Zakynthos \
+  --shortlist-fraction 0.4 \
+  --square-size 512 \
+  --bbox-crop \
+  --cache-dir /tmp/xfeat_bbox_compare \
+  --out docs/results/md_xfeat_cal_shortlist_N40pct_bbox.csv
+
+# Zakynthos, N = 40% (no crop)
+.venv/bin/python scripts/compare_md_xfeat_cal_shortlist.py \
+  --datasets Zakynthos \
+  --shortlist-fraction 0.4 \
+  --square-size 512 \
+  --cache-dir /tmp/xfeat_zakynthos \
+  --out docs/results/zakynthos_md_xfeat_cal_shortlist_N40pct_full.csv
+
+# Zakynthos, N = 40% (kepala crop, conf=0.25, min-area=0.10)
+.venv/bin/python scripts/compare_md_xfeat_cal_shortlist.py \
+  --datasets Zakynthos \
+  --shortlist-fraction 0.4 \
+  --square-size 512 \
+  --yolo-kepala \
+  --cache-dir /tmp/xfeat_zakynthos_kepala_min10 \
+  --out docs/results/zakynthos_md_xfeat_cal_shortlist_N40pct_kepala_min10.csv
 ```
 
 First run builds XFeat features and shortlist matrix (~minutes on MPS for n=200); later runs hit `.npy` cache.

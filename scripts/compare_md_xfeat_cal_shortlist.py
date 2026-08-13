@@ -29,6 +29,7 @@ from sides_matching import (  # noqa: E402
     get_transform,
     reunion_green,
     reunion_hawksbill,
+    zakynthos,
 )
 from sides_matching.evaluation import (  # noqa: E402
     filter_bilateral_df,
@@ -55,6 +56,7 @@ DATASETS = {
     "Amvrakikos": ("AmvrakikosTurtles", amvrakikos),
     "ReunionGreen": ("ReunionTurtles", reunion_green),
     "ReunionHawksbill": ("ReunionTurtles", reunion_hawksbill),
+    "Zakynthos": ("ZakynthosTurtles", zakynthos),
 }
 
 SPLIT_MODE = "one_per_side"
@@ -142,14 +144,19 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--yolo-pad",
         type=float,
-        default=0.05,
-        help="Fractional padding around detected kepala box",
+        default=0.50,
+        help="Fractional padding around detected kepala box (0.50 = 50 percent on each side)",
     )
     p.add_argument(
         "--yolo-min-area",
         type=float,
-        default=0.10,
+        default=0.005,
         help="Minimum detected box area (fraction of image) to apply crop",
+    )
+    p.add_argument(
+        "--bbox-crop",
+        action="store_true",
+        help="Crop XFeat inputs to dataset bbox (same as Wildlife img_load=bbox); no-op if no bbox column",
     )
     p.add_argument(
         "--out",
@@ -180,10 +187,12 @@ def main() -> None:
         max_size=None,
         square_size=args.square_size,
         cropper=cropper,
+        use_bbox=args.bbox_crop,
     )
     print(
         f"device={args.device} XFeat={matcher.resize_tag} "
         f"split={SPLIT_MODE} seed={args.seed}"
+        + (" bbox_crop" if args.bbox_crop else "")
         + (f" yolo_kepala={args.yolo_weights.name}" if args.yolo_kepala else "")
         + (
             f" shortlist_fraction={args.shortlist_fraction}"
@@ -266,6 +275,7 @@ def main() -> None:
             top_n=shortlist_n,
             cache_dir=args.cache_dir,
             matcher=matcher,
+            bboxes=df["bbox"].tolist() if args.bbox_crop and "bbox" in df.columns else None,
         )
 
         val_idx, test_idx = split_calibration_one_per_side(df, seed=args.seed)
@@ -308,6 +318,7 @@ def main() -> None:
                 "shortlist_fraction": args.shortlist_fraction,
                 "resize": matcher.resize_tag,
                 "yolo_kepala": args.yolo_kepala,
+                "bbox_crop": args.bbox_crop,
                 "split_mode": SPLIT_MODE,
                 "seed": args.seed,
                 "max_identities": args.max_identities,

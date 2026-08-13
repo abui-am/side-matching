@@ -1,0 +1,4 @@
+dataset,method,flip,shortlist_n,shortlist_fraction,resize,yolo_kepala,split_mode,seed,max_identities,n_identities,n_excluded_identities,n_images,n_queries,full_top1,full_top5,opp_top1
+Zakynthos,MegaDescriptor,True,64,0.4,kepala_min10_sq512,True,one_per_side,0,,40,0,160,80,0.26250000000000007,0.45000000000000023,0.23750000000000007
+Zakynthos,MD→XFeat N=64,True,64,0.4,kepala_min10_sq512,True,one_per_side,0,,40,0,160,80,0.17500000000000002,0.4375000000000002,0.17500000000000002
+Zakynthos,A CalShortlist N=64,True,64,0.4,kepala_min10_sq512,True,one_per_side,0,,40,0,160,80,0.22500000000000006,0.5375000000000001,0.21250000000000005
