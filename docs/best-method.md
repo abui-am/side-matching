@@ -163,6 +163,14 @@ MD cosine and XFeat counts are not on the same scale. Isotonic+PCHIP maps each t
 
 On Zakynthos XFeat (47.5%) is *worse* than MD. Ranking by XFeat counts would lose **23.7 pp**. Fusion still gains +2.5 pp over MD because the calibrator down-weights noisy match counts. That is the proof that the average of calibrated probabilities is the right combine rule.
 
+![A Zakynthos query where calibrated fusion corrects the MegaDescriptor top-1 ranking](figures/best-method/fusion_rescue_zakynthos.jpg)
+
+*Figure 6. Real test query rescued by fusion. MegaDescriptor ranks the correct identity second; calibrated MD+XFeat moves it to first. Green frames are the query identity.*
+
+![Successful XFeat correspondence lines between opposite profiles of the Reunion Green turtle Song](figures/best-method/xfeat_success_reunion.jpg)
+
+*Figure 7. Successful local matching on an already-cropped Reunion head pair. After flipping the query, XFeat finds 1,323 correspondences between opposite profiles of “Song.” Only 80 lines are drawn for readability.*
+
 ### 2. Bbox if present, otherwise full
 
 Zakynthos GT head boxes occupy **0.07–12.0%** of the raw photo (median **2.05%**, n=160). Resize the full 5472×3648 frame to 512×512 and the head is a few pixels; XFeat keypoints land on sand/water.
@@ -170,6 +178,10 @@ Zakynthos GT head boxes occupy **0.07–12.0%** of the raw photo (median **2.05%
 ![Full Zakynthos frame with GT box vs bbox crop at 512 vs full frame squashed to 512](figures/best-method/bbox_vs_full_zakynthos.jpg)
 
 *Figure 3. Same Zakynthos photo. Left: full camera frame with GT box. Middle: that box resized to 512×512. Right: the whole frame squashed to 512×512.*
+
+![XFeat correspondences on the same Zakynthos pair using full frames and dataset head boxes](figures/best-method/xfeat_full_vs_bbox_zakynthos.jpg)
+
+*Figure 8. Same-identity Zakynthos pair. Full-frame resizing produces 194 mostly scene-level correspondences; cropping to the labelled heads produces 1,089 correspondences concentrated on the turtle (+895). Only 80 lines per panel are drawn.*
 
 | Zakynthos N=64, 80 test queries | XFeat top-1 | CalShortlist |
 |---|---:|---:|
